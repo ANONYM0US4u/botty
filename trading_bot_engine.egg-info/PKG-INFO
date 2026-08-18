@@ -1,0 +1,23 @@
+Metadata-Version: 2.4
+Name: trading-bot-engine
+Version: 0.1.0
+Requires-Python: >=3.11
+Requires-Dist: gymnasium>=1.0
+Requires-Dist: stable-baselines3>=2.3
+Requires-Dist: polars>=1.0
+Requires-Dist: ccxt>=4.0
+Requires-Dist: yfinance>=0.2.40
+Requires-Dist: dhanhq>=2.2.0
+Requires-Dist: python-dotenv>=1.0
+Requires-Dist: fastapi>=0.115
+Requires-Dist: uvicorn[standard]>=0.30
+Requires-Dist: pydantic>=2.7
+Requires-Dist: structlog>=24.1
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: quantstats>=0.0.62
+Requires-Dist: numpy>=1.26
+Requires-Dist: optuna>=3.6
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+Requires-Dist: pytest-cov>=5.0; extra == "dev"
+Requires-Dist: hypothesis>=6.100; extra == "dev"

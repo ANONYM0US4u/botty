@@ -1,0 +1,25 @@
+[project]
+name = "trading-bot-engine"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+  "gymnasium>=1.0", "stable-baselines3>=2.3", "polars>=1.0",
+  "ccxt>=4.0", "yfinance>=0.2.40", "dhanhq>=2.2.0", "python-dotenv>=1.0",
+  "fastapi>=0.115", "uvicorn[standard]>=0.30", "pydantic>=2.7",
+  "structlog>=24.1", "pyyaml>=6.0", "quantstats>=0.0.62", "numpy>=1.26",
+  "optuna>=3.6"
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "hypothesis>=6.100"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["engine*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

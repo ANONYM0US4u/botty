@@ -1,0 +1,76 @@
+market:
+  timeframe_minutes: 5
+  # Data availability is NOT assumed: Task 4 probe determines the real
+  # intraday history span (yfinance 5m = ~60 days; Dhan historical API
+  # typically 1-2 years). train_years below are defaults that the probe
+  # may shrink — walk-forward must never use bars older than the probe proves.
+  history_years: 2
+
+instruments:
+  stocks: ["RELIANCE.NS"]
+  crypto: ["BTCUSDT"]
+  # AMENDMENT: these run as SEPARATE environments/runs — PPO #1 → RELIANCE.NS,
+  # PPO #2 → BTCUSDT. One instrument per env, one policy per instrument,
+  # separate checkpoints/eval. Never a joint action space.
+
+training:
+  seed: 42
+  total_timesteps: 200_000
+  eval_episodes: 10
+  train_years: [2024, 2025]      # defaults; overridden by Task 4 probe result
+  validate_years: [2026]
+  window_bars: 120
+  # Experiment tracking: every run gets run_id/model_id; checkpoints store
+  # git commit + config hash so a trained model is fully reproducible.
+  tracking:
+    run_id: ""                   # auto: timestamp + short hash
+    model_id: ""                 # auto: <symbol>_<run_id>
+
+reward:
+  # Per-term weights, each term logged separately in info["reward_terms"].
+  equity_delta_weight: 1.0
+  cost_weight: 1.0
+  drawdown_penalty: 0.1
+  holding_penalty: 0.0           # 0 initially; raise only after V1 baseline
+
+costs:
+  # Per-instrument cost model (per leg, fraction of notional + fixed):
+  # brokerage, STT, exchange txn charge, stamp duty, SEBI fee, GST on fees,
+  # slippage, spread. Different instruments get different values.
+  stocks:
+    brokerage_pct: 0.0           # broker flat is a fixed_charge
+    fixed_charge: 20.0
+    stt_pct: 0.001               # 0.1% intraday sell side
+    exchange_txn_pct: 0.0000325  # NSE equity
+    stamp_duty_pct: 0.00003      # buy side
+    sebi_pct: 0.000001
+    gst_pct: 0.18
+    slippage_bps: 2.0
+  crypto:
+    taker_fee_pct: 0.00055       # Bybit taker
+    slippage_bps: 2.0
+
+risk:
+  daily_loss_limit_pct: -3.0
+  max_position_pct: 30.0
+  max_total_exposure_pct: 90.0
+  stale_data_seconds: 120
+  flatten_at: "15:15"            # NSE intraday: force flat before market close
+  # RiskGateway is the ONLY component that may call broker.place_order.
+  # Scheduler/policy/API must go through RiskGateway.execute_order().
+
+brokers:
+  active: simulator
+  slippage_bps: 2
+  latency_bars: 1
+
+api:
+  host: 127.0.0.1
+  port: 8000
+
+storage:
+  db_path: data/trading.db
+  parquet_dir: data/parquet
+  # parquet = immutable historical bars; sqlite = operational ledger
+  # (orders, fills, decisions, equity, metrics, checkpoints). Never mixed.
+  checkpoint_dir: checkpoints
