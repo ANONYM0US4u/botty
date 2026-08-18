@@ -1,5 +1,6 @@
 from datetime import datetime
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from engine.api.metrics_emitter import MetricsEmitter
 
@@ -14,6 +15,10 @@ class KillSwitchBody(BaseModel):
 
 class PromotionBody(BaseModel):
     action: str
+
+
+class TheaterStartBody(BaseModel):
+    symbol: str
 
 
 class Promotion:
@@ -37,7 +42,7 @@ class Promotion:
         return self.state
 
 
-def create_app(store, risk, cfg: dict) -> FastAPI:
+def create_app(store, risk, cfg: dict, theater=None) -> FastAPI:
     app = FastAPI(title="Trading Bot Engine")
     promotion = Promotion()
 
@@ -90,6 +95,49 @@ def create_app(store, risk, cfg: dict) -> FastAPI:
                                "probs": "[]", "features": "[]", "attribution": "[]"})
         store.append_metric("promotion", _PROMOTION_ORDINAL[new_state], ts)
         return {"state": new_state}
+
+    @app.get("/api/decisions")
+    def decisions(symbol: str | None = None, limit: int = 100):
+        return store.get_decisions(symbol, limit)
+
+    def _require_theater():
+        return None if theater is None else theater
+
+    @app.get("/api/theater/state")
+    def theater_state():
+        if _require_theater() is None:
+            return JSONResponse({"error": "theater not configured"}, status_code=503)
+        return theater.state()
+
+    @app.post("/api/theater/start")
+    def theater_start(body: TheaterStartBody):
+        if _require_theater() is None:
+            return JSONResponse({"error": "theater not configured"}, status_code=503)
+        try:
+            out = theater.start(body.symbol)
+        except RuntimeError:
+            return JSONResponse({"error": "already running"}, status_code=409)
+        if "error" in out:
+            return JSONResponse(out, status_code=400)
+        return out
+
+    @app.post("/api/theater/stop")
+    def theater_stop():
+        if _require_theater() is None:
+            return JSONResponse({"error": "theater not configured"}, status_code=503)
+        return theater.stop()
+
+    @app.post("/api/theater/reset")
+    def theater_reset():
+        if _require_theater() is None:
+            return JSONResponse({"error": "theater not configured"}, status_code=503)
+        return theater.reset()
+
+    @app.get("/api/theater/leaderboard")
+    def theater_leaderboard():
+        if _require_theater() is None:
+            return JSONResponse({"error": "theater not configured"}, status_code=503)
+        return theater.leaderboard()
 
     @app.websocket("/ws/metrics")
     async def ws_metrics(ws: WebSocket):
