@@ -1,6 +1,7 @@
 from pathlib import Path
 import hashlib
 import json
+import os
 import subprocess
 import time
 from collections import deque
@@ -48,6 +49,43 @@ class _MetricCallback(BaseCallback):
             self.store.append_metric(name, value, self.ts_name)
 
 
+def atomic_save(model, path) -> None:
+    tmp = Path(str(path) + ".tmp")
+    model.save(str(tmp))
+    os.replace(tmp, path)
+
+
+class _TheaterCallback(_MetricCallback):
+    def __init__(self, emitter, store, ts_name: str):
+        super().__init__(emitter, store, ts_name)
+        self._probs = deque(maxlen=100)
+
+    def _on_step(self) -> bool:
+        try:
+            super()._on_step()
+        except Exception:
+            pass
+        try:
+            obs = self.locals["obs_tensor"][-1:]
+            dist = self.model.policy.get_distribution(obs)
+            probs = dist.distribution.probs.mean(axis=0).tolist()
+        except Exception:
+            return True
+        self._probs.append(probs)
+        if self.n_calls % 100 == 0 and self._probs:
+            avg = [float(sum(p[i] for p in self._probs) / len(self._probs))
+                   for i in range(3)]
+            payload = {"ts": self.ts_name, "probs": avg}
+            if self.emitter is not None and hasattr(self.emitter, "emit_json"):
+                self.emitter.emit_json("probs", payload)
+            if self.store is not None:
+                self.store.append_decision(
+                    {"ts": self.ts_name, "symbol": "theater",
+                     "action": str(int(avg.index(max(avg)))), "probs": str(avg),
+                     "features": "[]", "attribution": "[]"})
+        return True
+
+
 def _run_metadata(cfg_hash: str) -> dict:
     """Experiment tracking: run_id/model_id + git commit + config hash."""
     run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{hashlib.sha1(cfg_hash.encode()).hexdigest()[:6]}"
@@ -78,7 +116,7 @@ def train_ppo(env: gym.Env, total_timesteps: int, checkpoint_dir: str | Path,
         model.learn(total_timesteps=chunk, progress_bar=False, callback=cb)
         steps += chunk
         last_path = cdir / f"ppo_{seed}_{steps}.zip"
-        model.save(last_path)
+        atomic_save(model, last_path)
         if store is not None:
             store.append_checkpoint({"path": str(last_path), "reward": 0.0,
                                      "sharpe": 0.0, "ts": steps, **meta})
