@@ -1,5 +1,6 @@
 from datetime import datetime
 import time
+from stable_baselines3.common.utils import obs_as_tensor
 from engine.env.trading_env import TradingEnv
 from engine.data.indicators import add_indicators
 
@@ -26,8 +27,16 @@ class Scheduler:
         env = TradingEnv(symbol, bars, window=self.window, seed=0)
         obs, _ = env.reset()
         action, _ = self.policy.predict(obs, deterministic=True)
+        probs = []
+        try:
+            obs_t = obs_as_tensor(obs, self.policy.device).unsqueeze(0)
+            dist = self.policy.policy.get_distribution(obs_t)
+            probs = [float(p) for p in
+                     dist.distribution.probs.detach().mean(axis=0)]
+        except Exception:
+            probs = []
         target = {0: "flat", 1: "long", 2: "short"}[int(action)]
-        summary = {"action": target, "reason": ""}
+        summary = {"action": target, "reason": "", "probs": probs}
         if target != "flat":
             order = {"symbol": symbol,
                      "side": "buy" if target == "long" else "sell",
@@ -36,7 +45,7 @@ class Scheduler:
             if res.get("status") == "failed":
                 summary = {"action": "flat", "reason": res.get("reason", "risk-gated")}
         self.store.append_decision({"ts": ts, "symbol": symbol,
-                                    "action": summary["action"], "probs": "[]",
+                                    "action": summary["action"], "probs": str(probs),
                                     "features": "[]", "attribution": "[]"})
         eq = self.risk.get_balance()
         self.store.append_equity(ts, eq)

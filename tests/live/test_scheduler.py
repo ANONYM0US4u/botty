@@ -52,3 +52,17 @@ def test_scheduler_never_holds_broker(tmp_path):
     sim = SimulatorAdapter(initial_cash=100_000.0)
     sched = Scheduler(_gate(sim), store, policy, {"symbols": ["RELIANCE.NS"]})
     assert not hasattr(sched, "broker")  # structural: execution only via RiskGateway
+
+
+def test_decision_records_real_probs(tmp_path):
+    import json
+    store, policy = _setup(tmp_path)
+    sim = SimulatorAdapter(initial_cash=100_000.0)
+    sched = Scheduler(_gate(sim), store, policy, {"symbols": ["RELIANCE.NS"]})
+    sched.on_bar_close("RELIANCE.NS", {"time": "2026-01-02 09:20:00",
+                                       "open": 100.0, "close": 101.0})
+    rows = store.get_decisions(symbol="RELIANCE.NS", limit=1)
+    assert rows and rows[0]["probs"] != "[]"
+    p = json.loads(rows[0]["probs"])
+    assert len(p) == 3
+    assert abs(sum(p) - 1.0) < 1e-6
