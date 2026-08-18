@@ -40,6 +40,12 @@ override any conflicting statement elsewhere in this document:
 15. **Dashboard priority**: V1.0 = Overview/Trades/Performance/Risk/Logs;
     Brain tab (uncertainty = action probs + entropy, never fake "confidence")
     is V1.1 after e2e smoke.
+16. **Crypto broker = Gate testnet** (2026-08-19, user decision): Bybit testnet
+    key creation was blocked, so the crypto leg uses a GENERIC CCXT adapter
+    (`CcxtAdapter(exchange_id, ...)`, default `gate`) instead of BybitAdapter.
+    Clock-skew auto-compensation via `options["timeDifference"]` measured from
+    `fetch_time()` at init (user PC clock runs ~22s slow). Fetcher default
+    `exchange_id` also switched bybit → gate. Keys: `GATE_TESTNET_API_KEY/SECRET`.
 
 ## 1. Vision
 

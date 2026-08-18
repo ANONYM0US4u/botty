@@ -4,7 +4,7 @@ import ccxt
 
 
 def fetch_crypto_bars(symbol: str, start: str, end: str, interval: str = "5m",
-                      exchange_id: str = "bybit") -> pl.DataFrame:
+                      exchange_id: str = "gate") -> pl.DataFrame:
     exch_cls = getattr(ccxt, exchange_id, None)
     if exch_cls is None:
         raise ValueError(f"exchange {exchange_id} unavailable")

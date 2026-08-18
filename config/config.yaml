@@ -47,7 +47,7 @@ costs:
     gst_pct: 0.18
     slippage_bps: 2.0
   crypto:
-    taker_fee_pct: 0.00055       # Bybit taker
+    taker_fee_pct: 0.00055       # Gate taker
     slippage_bps: 2.0
 
 risk:

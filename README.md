@@ -1,7 +1,7 @@
 # Self-Learning Intraday Trading Bot
 
 RL-driven intraday trading bot for NSE stocks (Dhan sandbox paper trading) and
-crypto futures (Bybit testnet), with a Next.js dashboard. PPO trains on
+crypto futures (Gate testnet), with a Next.js dashboard. PPO trains on
 historical bars; a risk gateway owns all execution; promotion to live is a
 multi-step state machine (`paper -> staged -> live`), never a single button.
 
@@ -22,7 +22,7 @@ py -3.13 -m venv .venv
 .venv\Scripts\python.exe -m pip install -e ".[dev]"
 
 # 2. Config
-copy config\.env.example config\.env   # add broker keys (Dhan sandbox, Bybit testnet)
+copy config\.env.example config\.env   # add broker keys (Dhan sandbox, Gate testnet)
 
 # 3. Tests
 .venv\Scripts\python.exe -m pytest
