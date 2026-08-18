@@ -6,3 +6,5 @@ checkpoints/
 node_modules/
 .next/
 .venv/
+references/
+*.egg-info/
