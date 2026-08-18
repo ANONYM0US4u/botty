@@ -54,3 +54,27 @@ def test_decisions_roundtrip(store):
     with store._conn() as conn:
         rows = conn.execute("SELECT action FROM decisions").fetchall()
     assert rows == [("long",)]
+
+
+def test_conn_busy_timeout(tmp_path):
+    store = DataStore(tmp_path / "t.db", tmp_path / "pq")
+    store.init_schema()
+    conn = store._conn()
+    row = conn.execute("PRAGMA busy_timeout").fetchone()
+    assert row[0] >= 5000
+    conn.close()
+
+
+def test_get_decisions_filters_and_orders(tmp_path):
+    store = DataStore(tmp_path / "t.db", tmp_path / "pq")
+    store.init_schema()
+    store.append_decision({"ts": "2026-01-02 09:30:00", "symbol": "RELIANCE.NS",
+                           "action": "long", "probs": "[0.1,0.8,0.1]",
+                           "features": "[]", "attribution": "[]"})
+    store.append_decision({"ts": "2026-01-02 09:35:00", "symbol": "BTCUSDT",
+                           "action": "flat", "probs": "[0.9,0.05,0.05]",
+                           "features": "[]", "attribution": "[]"})
+    rows = store.get_decisions(symbol="RELIANCE.NS", limit=10)
+    assert len(rows) == 1 and rows[0]["action"] == "long"
+    rows2 = store.get_decisions(limit=10)
+    assert len(rows2) == 2 and rows2[0]["symbol"] == "BTCUSDT"

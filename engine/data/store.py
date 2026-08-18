@@ -37,6 +37,7 @@ class DataStore:
     def _conn(self):
         conn = sqlite3.connect(self.db_path)
         conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
         return conn
 
     def init_schema(self) -> None:
@@ -107,6 +108,21 @@ class DataStore:
             conn.execute(
                 "INSERT INTO decisions VALUES (:ts,:symbol,:action,:probs,:features,:attribution)",
                 rec)
+
+    def get_decisions(self, symbol: str | None = None,
+                      limit: int = 100) -> list[dict]:
+        with self._conn() as conn:
+            if symbol:
+                rows = conn.execute(
+                    "SELECT ts, symbol, action, probs FROM decisions "
+                    "WHERE symbol=? ORDER BY ts DESC LIMIT ?",
+                    (symbol, limit)).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT ts, symbol, action, probs FROM decisions "
+                    "ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
+        return [{"ts": r[0], "symbol": r[1], "action": r[2], "probs": r[3]}
+                for r in rows]
 
     def append_metric(self, name: str, value: float, ts: str) -> None:
         with self._conn() as conn:
