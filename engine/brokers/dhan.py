@@ -1,10 +1,16 @@
 from engine.brokers.base import BrokerAdapter
-from dhanhq import dhanhq
+from dhanhq import DhanContext
+from dhanhq.dhanhq import dhanhq
+
+_SANDBOX_BASE_URL = "https://sandbox.dhan.co/v2"
 
 
 class DhanAdapter(BrokerAdapter):
     def __init__(self, client_id: str, access_token: str, is_sandbox: bool = True):
-        self.client = dhanhq(client_id, access_token, is_sandbox=is_sandbox)
+        ctx = DhanContext(client_id, access_token)
+        if is_sandbox:
+            ctx.dhan_http.base_url = _SANDBOX_BASE_URL
+        self.client = dhanhq(ctx)
 
     def place_order(self, order: dict) -> dict:
         side = "BUY" if order["side"] == "buy" else "SELL"
@@ -35,6 +41,6 @@ class DhanAdapter(BrokerAdapter):
         return resp.get("data", []) or []
 
     def get_balance(self) -> float:
-        resp = self.client.get_fund_limit()
+        resp = self.client.get_fund_limits()
         data = resp.get("data", {}) or {}
         return float(data.get("availabelBalance", data.get("availableBalance", 0.0)))
