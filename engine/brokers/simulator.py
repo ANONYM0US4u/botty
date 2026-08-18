@@ -15,8 +15,24 @@ class SimulatorAdapter(BrokerAdapter):
 
     def place_order(self, order: dict) -> dict:
         o = {"id": str(uuid.uuid4()), "status": "open", **order}
-        self.orders.append(o)
+        if o.get("market"):
+            self._fill_now(o)
+        else:
+            self.orders.append(o)
         return o
+
+    def _fill_now(self, o: dict) -> None:
+        fill_price = float(o.get("price", 0.0) or 0.0)
+        qty = float(o["qty"])
+        if o["side"] == "buy":
+            self.cash -= fill_price * qty
+            self.positions[o["symbol"]] = self.positions.get(o["symbol"], 0.0) + qty
+        else:
+            self.cash += fill_price * qty
+            self.positions[o["symbol"]] = self.positions.get(o["symbol"], 0.0) - qty
+        o["status"] = "filled"
+        o["fill_price"] = fill_price
+        self.last_fill_price = fill_price
 
     def cancel_order(self, order_id: str) -> bool:
         for o in self.orders:
