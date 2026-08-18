@@ -1,6 +1,6 @@
 import Link from "next/link"
 
-const tabs = ["overview", "trades", "performance", "risk", "logs"]
+const tabs = ["overview", "trades", "performance", "risk", "brain", "logs"]
 
 export default function Nav() {
   return (
