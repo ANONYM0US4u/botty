@@ -1,0 +1,60 @@
+import polars as pl
+import numpy as np
+from engine.env.trading_env import TradingEnv
+from engine.data.indicators import add_indicators
+
+
+def _bars(n=400):
+    rows = [{"time": f"2026-01-02 09:{15 + i:02d}:00", "open": 100.0 + i * 0.1,
+             "high": 101.0 + i * 0.1, "low": 99.0 + i * 0.1,
+             "close": 100.5 + i * 0.1, "volume": 1000.0} for i in range(n)]
+    return add_indicators(pl.DataFrame(rows))
+
+
+def test_reset_shape_and_seed_determinism():
+    env1 = TradingEnv("RELIANCE.NS", _bars(), seed=7)
+    env2 = TradingEnv("RELIANCE.NS", _bars(), seed=7)
+    o1, _ = env1.reset()
+    o2, _ = env2.reset()
+    assert o1.shape == o2.shape
+    assert np.allclose(o1, o2)
+
+
+def test_action_space_is_discrete_3():
+    env = TradingEnv("RELIANCE.NS", _bars(), seed=1)
+    assert env.action_space.n == 3
+    env.reset()
+    obs, reward, terminated, truncated, info = env.step(1)  # long
+    assert not terminated
+    assert isinstance(reward, float)
+    assert info["equity"] > 0
+
+
+def test_reward_terms_are_observable():
+    env = TradingEnv("RELIANCE.NS", _bars(), seed=2, cost_pct=0.001)
+    env.reset()
+    _, reward, _, _, info = env.step(2)  # short
+    terms = info["reward_terms"]
+    assert set(terms) == {"equity_delta", "cost", "drawdown", "holding"}
+    assert abs(reward - (terms["equity_delta"] - terms["cost"]
+                         - terms["drawdown"] - terms["holding"])) < 1e-9
+
+
+def test_causal_feature_invariant():
+    # Observation at index i must not change if later bars are removed.
+    full = _bars()
+    env_full = TradingEnv("RELIANCE.NS", full, seed=3)
+    env_full.reset()
+    truncated = _bars(300)  # same bars, cut short
+    env_trunc = TradingEnv("RELIANCE.NS", truncated, seed=3)
+    env_trunc.reset()
+    assert np.allclose(env_full._obs(), env_trunc._obs())
+
+
+def test_long_profits_in_uptrend():
+    bars = _bars()
+    env = TradingEnv("RELIANCE.NS", bars, seed=2, cost_pct=0.0)
+    env.reset()
+    for _ in range(50):
+        env.step(1)
+    assert env.equity > env.initial_cash
