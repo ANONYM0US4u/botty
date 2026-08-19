@@ -77,14 +77,14 @@ def test_fetch_failure_returns_error(tmp_path, monkeypatch):
 def test_reset_clears_only_current_run(tmp_path, monkeypatch):
     monkeypatch.setattr("stable_baselines3.PPO", _fake_ppo())
     th, _ = _theater(tmp_path)
-    (tmp_path / "ck" / "theater" / "keep").mkdir(parents=True)
-    (tmp_path / "ck" / "theater" / "keep" / "x.zip").write_text("x")
+    (tmp_path / "ck" / "theater" / "crypto" / "keep").mkdir(parents=True)
+    (tmp_path / "ck" / "theater" / "crypto" / "keep" / "x.zip").write_text("x")
     th.start("RELIANCE.NS")
     time.sleep(0.2)
     th.stop(); th.wait_idle(10)
     th.reset()
     assert th.state()["status"] == "idle"
-    assert (tmp_path / "ck" / "theater" / "keep" / "x.zip").exists()
+    assert (tmp_path / "ck" / "theater" / "crypto" / "keep" / "x.zip").exists()
 
 
 def test_leaderboard_ranks_by_sharpe(tmp_path, monkeypatch):
@@ -96,10 +96,11 @@ def test_leaderboard_ranks_by_sharpe(tmp_path, monkeypatch):
                         obs, **kw: (__import__("numpy").zeros(()), None)})())
     th, store = _theater(tmp_path)
     store.save_bars("BTCUSDT", _bars(400), 5)
-    (th.ck_root / "runB").mkdir(parents=True)
-    (th.ck_root / "runB" / "ppo_b.zip").write_text("b")
+    (th.ck_root / "crypto" / "runB").mkdir(parents=True)
+    (th.ck_root / "crypto" / "runB" / "ppo_b.zip").write_text("b")
     with th._lock:
         th._run_id = "runB"
+        th._market = "crypto"
         th._symbol = "BTCUSDT"
         th._lb_ready = False
     rows = th.leaderboard()
@@ -111,3 +112,30 @@ def test_leaderboard_ranks_by_sharpe(tmp_path, monkeypatch):
         time.sleep(0.05)
     assert len(rows) == 1
     assert rows[0]["sharpe"] == 1.0
+
+
+def test_start_creates_market_scoped_run_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr("stable_baselines3.PPO", _fake_ppo())
+    th, _ = _theater(tmp_path)
+    th.start("RELIANCE.NS")
+    time.sleep(0.2)
+    th.stop(); th.wait_idle(10)
+    dirs = list((th.ck_root / "nse").iterdir())
+    assert len(dirs) == 1 and dirs[0].name.startswith("RELIANCE.NS-")
+
+
+def test_start_rejects_unknown_symbol(tmp_path):
+    th, _ = _theater(tmp_path)
+    out = th.start("MISSING.NS")
+    assert out["error"] and th.state()["status"] == "idle"
+
+
+def test_prunes_old_runs_per_market(tmp_path):
+    th, _ = _theater(tmp_path)
+    for i in range(4):
+        (th.ck_root / "nse" / f"TCS.NS-2026010{i}-000000").mkdir(parents=True)
+    (th.ck_root / "crypto" / "BTCUSDT-20260105-000000").mkdir(parents=True)
+    th._prune("nse")
+    nse = sorted(p.name for p in (th.ck_root / "nse").iterdir())
+    assert nse == [f"TCS.NS-2026010{i}-000000" for i in (1, 2, 3)]
+    assert (th.ck_root / "crypto" / "BTCUSDT-20260105-000000").exists()

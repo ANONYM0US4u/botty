@@ -27,11 +27,17 @@ class TrainingTheater:
         self.fetch_bars = fetch_bars
         self.ck_root = (Path(cfg["storage"]["checkpoint_dir"]) / "theater")
         self.ck_root.mkdir(parents=True, exist_ok=True)
+        self.markets = {"crypto": set(cfg["instruments"]["crypto"]),
+                        "nse": set(cfg["instruments"]["stocks"])}
+        self._market_of = {s: m for m, syms in self.markets.items()
+                           for s in syms}
+        self._max_runs = int(cfg.get("theater", {}).get("max_runs_kept", 3))
         self._stop = threading.Event()
         self._train_thread: threading.Thread | None = None
         self._replay_thread: threading.Thread | None = None
         self._status = "idle"
         self._symbol = None
+        self._market = None
         self._run_id = None
         self._steps = 0
         self._phase = ""
@@ -53,6 +59,9 @@ class TrainingTheater:
         with self._lock:
             if self._status in ("running", "starting", "stopping"):
                 raise RuntimeError("already running")
+            market = self._market_of.get(symbol)
+            if market is None:
+                return {"error": f"symbol {symbol} not configured"}
             try:
                 bars = self.fetch_bars(symbol)
             except Exception as e:
@@ -61,15 +70,17 @@ class TrainingTheater:
                 return {"error": "fetch returned no bars"}
             self.store.save_bars(symbol, bars, 5)
             self._symbol = symbol
-            self._run_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+            self._market = market
+            self._run_id = f"{symbol}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
             self._steps = 0
             self._error = ""
             self._status = "starting"
-            run_dir = self.ck_root / self._run_id
+            run_dir = self.ck_root / market / self._run_id
             run_dir.mkdir(parents=True, exist_ok=True)
             self._stop.clear()
             self._lb_cache = None
             self._lb_ready = False
+            self._prune(market)
             self._train_thread = threading.Thread(
                 target=self._train_loop, args=(symbol, bars, run_dir),
                 daemon=True)
@@ -88,10 +99,12 @@ class TrainingTheater:
         self.stop()
         self.wait_idle(30)
         with self._lock:
-            if self._run_id:
-                shutil.rmtree(self.ck_root / self._run_id, ignore_errors=True)
+            if self._run_id and self._market:
+                shutil.rmtree(self.ck_root / self._market / self._run_id,
+                              ignore_errors=True)
             self._status = "idle"
             self._symbol = None
+            self._market = None
             self._run_id = None
             self._steps = 0
             self._phase = ""
@@ -192,7 +205,8 @@ class TrainingTheater:
         while True:
             with self._lock:
                 run_id = self._run_id
-            root = self.ck_root / run_id if run_id else None
+                market = self._market
+            root = self.ck_root / market / run_id if (run_id and market) else None
             if root is None or not root.exists():
                 with self._lock:
                     self._lb_ready = True
@@ -201,7 +215,8 @@ class TrainingTheater:
             rows = [self._evaluate_checkpoint(f) for f in files]
             rows.sort(key=lambda r: r.get("sharpe", -1e9), reverse=True)
             with self._lock:
-                if self._run_id != run_id or not root.exists():
+                if (self._run_id != run_id or self._market != market
+                        or not root.exists()):
                     self._lb_ready = True
                     return
                 if tuple(sorted(root.glob("ppo_*.zip"))) != files:
@@ -236,6 +251,15 @@ class TrainingTheater:
         except Exception:
             return {"path": str(ck), "sharpe": -1e9, "win_rate": 0.0,
                     "mean_reward": 0.0, "traits": {}}
+
+    def _prune(self, market: str) -> None:
+        root = self.ck_root / market
+        if not root.exists():
+            return
+        dirs = sorted([d for d in root.iterdir() if d.is_dir()],
+                      key=lambda d: d.name)
+        for old in dirs[:-self._max_runs]:
+            shutil.rmtree(old, ignore_errors=True)
 
     def _set_phase(self, phase: str) -> None:
         with self._lock:

@@ -4,7 +4,9 @@ import polars as pl
 from gymnasium import spaces
 
 _FEATURES = ["open", "high", "low", "close", "volume",
-             "ema9", "ema21", "rsi14", "atr14", "vwap", "session_band", "ret1", "vol20"]
+             "ema9", "ema21", "rsi14", "atr14", "vwap", "session_band", "ret1", "vol20",
+             "boll_pos", "macd_hist", "body_pct", "upper_wick_pct",
+             "lower_wick_pct", "dist_to_high_pct"]
 
 
 class TradingEnv(gym.Env):

@@ -16,4 +16,7 @@ def fetch_nse_minute_bars(symbol: str, start: str, end: str,
     df.columns = ["time", "open", "high", "low", "close", "volume"]
     if df["time"].dt.tz is not None:
         df["time"] = df["time"].dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
+    df = df.astype({"open": "float64", "high": "float64", "low": "float64",
+                    "close": "float64", "volume": "float64"})
+    df["time"] = df["time"].astype("datetime64[ns]")
     return pl.from_pandas(df)

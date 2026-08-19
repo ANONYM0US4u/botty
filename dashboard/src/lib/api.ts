@@ -35,6 +35,30 @@ export const theaterCommand = (cmd: "start" | "stop" | "reset", symbol?: string)
     body: JSON.stringify(symbol ? { symbol } : {}),
   })
 
+export interface TradeState {
+  running: boolean
+  error: string
+  last_poll: string | null
+  skips: Record<string, string>
+}
+
+export interface ModeState {
+  market: string
+  mode: "idle" | "train" | "trade"
+  switching: boolean
+  markets: string[]
+  trade: TradeState
+  train: TheaterState
+}
+
+export const getMode = () => get<ModeState>("/api/mode")
+export const postMode = (body: { market?: string; mode?: string }) =>
+  fetch(`${BASE}/api/mode`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+
 export function useMetricsWs(onMessage: (m: MetricPoint) => void) {
   if (typeof window === "undefined") return
   const ws = new WebSocket(`${BASE.replace(/^http/, "ws")}/ws/metrics`)

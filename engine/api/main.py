@@ -27,6 +27,11 @@ class TheaterStartBody(BaseModel):
     symbol: str
 
 
+class ModeBody(BaseModel):
+    mode: str | None = None
+    market: str | None = None
+
+
 class Promotion:
     """paper -> staged -> live; approve never skips staging."""
 
@@ -48,7 +53,7 @@ class Promotion:
         return self.state
 
 
-def create_app(store, risk, cfg: dict, theater=None) -> FastAPI:
+def create_app(store, risk, cfg: dict, theater=None, mode=None) -> FastAPI:
     app = FastAPI(title="Trading Bot Engine")
     app.add_middleware(
         CORSMiddleware,
@@ -115,6 +120,31 @@ def create_app(store, risk, cfg: dict, theater=None) -> FastAPI:
     def _require_theater():
         return None if theater is None else theater
 
+    def _require_mode():
+        return None if mode is None else mode
+
+    @app.get("/api/mode")
+    def mode_state():
+        if _require_mode() is None:
+            return JSONResponse({"error": "mode not configured"}, status_code=503)
+        return mode.state()
+
+    @app.post("/api/mode")
+    def mode_post(body: ModeBody):
+        if _require_mode() is None:
+            return JSONResponse({"error": "mode not configured"}, status_code=503)
+        if body.market is None and body.mode is None:
+            return JSONResponse({"error": "provide market or mode"}, status_code=400)
+        if body.market is not None:
+            out = mode.set_market(body.market)
+            if "error" in out:
+                return JSONResponse(out, status_code=400)
+        if body.mode is not None:
+            out = mode.set_mode(body.mode)
+            if "error" in out:
+                return JSONResponse(out, status_code=400)
+        return mode.state()
+
     @app.get("/api/theater/state")
     def theater_state():
         if _require_theater() is None:
@@ -125,6 +155,9 @@ def create_app(store, risk, cfg: dict, theater=None) -> FastAPI:
     def theater_start(body: TheaterStartBody):
         if _require_theater() is None:
             return JSONResponse({"error": "theater not configured"}, status_code=503)
+        if mode is not None and not mode.can_train():
+            return JSONResponse({"error": "switch mode to train first"},
+                                status_code=409)
         try:
             out = theater.start(body.symbol)
         except RuntimeError:

@@ -7,11 +7,14 @@ market:
   history_years: 2
 
 instruments:
-  stocks: ["RELIANCE.NS"]
+  stocks: ["RELIANCE.NS", "HDFCBANK.NS", "TCS.NS"]
   crypto: ["BTCUSDT"]
   # AMENDMENT: these run as SEPARATE environments/runs — PPO #1 → RELIANCE.NS,
   # PPO #2 → BTCUSDT. One instrument per env, one policy per instrument,
   # separate checkpoints/eval. Never a joint action space.
+
+theater:
+  max_runs_kept: 3            # newest N runs retained per market (crypto/nse)
 
 training:
   seed: 42

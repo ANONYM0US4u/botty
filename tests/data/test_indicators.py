@@ -13,7 +13,9 @@ def _df(n=50):
 
 def test_columns_added():
     out = add_indicators(_df())
-    for col in ["ema9", "ema21", "rsi14", "atr14", "vwap", "session_band", "ret1", "vol20"]:
+    for col in ["ema9", "ema21", "rsi14", "atr14", "vwap", "session_band", "ret1", "vol20",
+                "boll_pos", "macd_hist", "body_pct", "upper_wick_pct",
+                "lower_wick_pct", "dist_to_high_pct"]:
         assert col in out.columns
 
 
@@ -40,7 +42,33 @@ def test_indicators_are_causal():
     # No lookahead: values at index i must not change when later bars are removed.
     full = add_indicators(_df())
     cut = add_indicators(_df(30))
-    for col in ["ema9", "ema21", "rsi14", "atr14", "vwap", "session_band", "ret1", "vol20"]:
+    for col in ["ema9", "ema21", "rsi14", "atr14", "vwap", "session_band", "ret1", "vol20",
+                "boll_pos", "macd_hist", "body_pct", "upper_wick_pct",
+                "lower_wick_pct", "dist_to_high_pct"]:
         a = full[col].head(30).fill_null(0.0).to_list()
         b = cut[col].fill_null(0.0).to_list()
         assert a == b, f"{col} is not causal"
+
+
+def test_pattern_indicators_bounded():
+    out = add_indicators(_df())
+    body = out["body_pct"].drop_nulls()
+    assert (body >= 0.0).all() and (body <= 1.0).all()
+    uw = out["upper_wick_pct"].drop_nulls()
+    lw = out["lower_wick_pct"].drop_nulls()
+    assert (uw >= 0.0).all() and (uw <= 1.0).all()
+    assert (lw >= 0.0).all() and (lw <= 1.0).all()
+    assert (out["body_pct"] + out["upper_wick_pct"] +
+            out["lower_wick_pct"]).drop_nulls().abs().max() <= 1.0001
+    bp = out["boll_pos"].drop_nulls()
+    assert bp.abs().max() <= 2.0
+    dth = out["dist_to_high_pct"].drop_nulls()
+    assert (dth >= 0.0).all() and (dth <= 1.0).all()
+
+
+def test_pattern_indicators_no_nan_after_warmup():
+    out = add_indicators(_df(60))
+    tail = out.tail(10)
+    for col in ["boll_pos", "macd_hist", "body_pct", "upper_wick_pct",
+                "lower_wick_pct", "dist_to_high_pct"]:
+        assert tail[col].null_count() == 0, col
