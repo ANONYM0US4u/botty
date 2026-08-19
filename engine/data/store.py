@@ -37,6 +37,7 @@ class DataStore:
     def _conn(self):
         conn = sqlite3.connect(self.db_path)
         conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA busy_timeout=5000")
         return conn
 
@@ -46,7 +47,10 @@ class DataStore:
 
     def save_bars(self, symbol: str, df: pl.DataFrame, interval_minutes: int) -> None:
         safe = symbol.replace("/", "_")
-        df.write_parquet(self.parquet_dir / f"{safe}_{interval_minutes}m.parquet")
+        dest = self.parquet_dir / f"{safe}_{interval_minutes}m.parquet"
+        tmp = dest.with_suffix(dest.suffix + ".tmp")
+        df.write_parquet(tmp)
+        tmp.replace(dest)
 
     def get_bars(self, symbol: str, start: str | None = None,
                  end: str | None = None) -> pl.DataFrame:

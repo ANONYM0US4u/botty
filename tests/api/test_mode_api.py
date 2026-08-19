@@ -25,6 +25,11 @@ class FakeMode:
     def can_train(self):
         return self._mode != "trade"
 
+    def start_theater(self, symbol):
+        if self._mode == "trade":
+            return {"error": "switch mode to train first", "code": "mode"}
+        return {"status": "running"}
+
     def start(self, symbol):
         return {"status": "running"}
 
@@ -90,3 +95,30 @@ def test_theater_start_blocked_in_trade_mode(client):
     client.post("/api/mode", json={"mode": "train"})
     assert client.post("/api/theater/start",
                        json={"symbol": "BTCUSDT"}).status_code == 200
+
+
+def test_ws_metrics_rejects_foreign_origin(client):
+    from starlette.websockets import WebSocketDisconnect
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/ws/metrics",
+                                      headers={"origin": "https://evil.example"}) as ws:
+            ws.receive_text()  # server closes the handshake (4403)
+
+
+def test_ws_metrics_accepts_known_origin(client):
+    with client.websocket_connect(
+            "/ws/metrics",
+            headers={"origin": "http://localhost:3001"}) as ws:
+        ws.send_text("ping")  # stays open when origin is allowed
+
+
+def test_killswitch_status_and_positions_work_with_mode_app(tmp_path):
+    store = DataStore(tmp_path / "t.db", tmp_path / "pq")
+    store.init_schema()
+    risk = RiskGateway(SimulatorAdapter(), _RISK)
+    c = TestClient(create_app(store, risk, {},
+                              theater=FakeMode(), mode=FakeMode()))
+    assert c.get("/api/status").json()["killed"] is False
+    assert c.post("/api/killswitch", json={"active": True}).json()["killed"] is True
+    assert c.get("/api/status").json()["killed"] is True
+    assert c.get("/api/positions").json() == []

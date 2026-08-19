@@ -50,10 +50,16 @@ def main() -> None:
     from engine.api import main as api_main
     emitter = api_main.emitter  # the singleton the WS route registers clients with
     fetch_bars = make_fetch_bars(cfg)
+    from engine.brokers.simulator import SimulatorAdapter
+    risk = RiskGateway(
+        SimulatorAdapter(slippage_bps=cfg["brokers"].get("slippage_bps", 2.0),
+                         latency_bars=cfg["brokers"].get("latency_bars", 1)),
+        cfg["risk"], store=store,
+        flatten_symbols=set(cfg["instruments"]["stocks"]))
     theater = TrainingTheater(store, emitter, cfg, fetch_bars)
     from engine.trading.mode import BotMode
-    mode = BotMode(store, emitter, cfg, theater, fetch_bars)
-    app = create_app(store, None, cfg, theater=theater, mode=mode)
+    mode = BotMode(store, emitter, cfg, theater, fetch_bars, risk=risk)
+    app = create_app(store, risk, cfg, theater=theater, mode=mode)
     uvicorn.run(app, host=cfg["api"]["host"], port=cfg["api"]["port"])
 
 

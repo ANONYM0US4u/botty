@@ -74,5 +74,69 @@ def test_flatten_before_close():
     from datetime import datetime
     rm = _gate()
     rm.broker.positions["RELIANCE.NS"] = 10.0
+    rm.set_last_price("RELIANCE.NS", 2500.0)
     rm.maybe_flatten_before_close(datetime(2026, 1, 2, 15, 16))
     assert rm.broker.get_positions() == []
+
+
+def test_flatten_uses_last_price_and_skips_unknown_price():
+    from datetime import datetime
+    rm = _gate()
+    rm.broker.positions["RELIANCE.NS"] = 10.0
+    rm.maybe_flatten_before_close(datetime(2026, 1, 2, 15, 16))
+    assert rm.broker.cash == 100_000.0  # no last price -> no zero-price sale
+    rm.set_last_price("RELIANCE.NS", 2500.0)
+    rm.broker.positions["RELIANCE.NS"] = 10.0
+    rm.maybe_flatten_before_close(datetime(2026, 1, 2, 15, 16))
+    assert rm.broker.get_positions() == []
+    assert rm.broker.cash == 100_000.0 + 25_000.0
+
+
+def test_flatten_skips_symbols_outside_flatten_set():
+    from datetime import datetime
+    rm = RiskGateway(SimulatorAdapter(),
+                     {"daily_loss_limit_pct": -3.0, "max_position_pct": 30.0,
+                      "max_total_exposure_pct": 90.0, "stale_data_seconds": 120,
+                      "flatten_at": "15:15"},
+                     flatten_symbols={"RELIANCE.NS"})
+    rm.broker.positions["BTCUSDT"] = 1.0
+    rm.set_last_price("BTCUSDT", 60_000.0)
+    rm.maybe_flatten_before_close(datetime(2026, 1, 2, 15, 16), "BTCUSDT")
+    assert rm.broker.get_positions() != []  # 24/7 market: no NSE close flatten
+    rm.broker.positions["RELIANCE.NS"] = 10.0
+    rm.set_last_price("RELIANCE.NS", 2500.0)
+    rm.maybe_flatten_before_close(datetime(2026, 1, 2, 15, 16), "RELIANCE.NS")
+    assert rm.broker.positions["RELIANCE.NS"] == 0.0
+    assert rm.broker.positions["BTCUSDT"] == 1.0  # out-of-scope kept
+
+
+def test_execute_order_records_fill_when_store_present(tmp_path):
+    from engine.data.store import DataStore
+    store = DataStore(tmp_path / "t.db", tmp_path / "pq")
+    store.init_schema()
+    rm = RiskGateway(SimulatorAdapter(), {"daily_loss_limit_pct": -3.0,
+                                          "max_position_pct": 30.0,
+                                          "max_total_exposure_pct": 90.0,
+                                          "stale_data_seconds": 120,
+                                          "flatten_at": "15:15"},
+                     store=store)
+    res = rm.execute_order({"symbol": "X", "side": "buy", "qty": 10, "price": 100.0})
+    assert res["status"] == "open"       # queued: fills at the NEXT bar open
+    assert store.get_trades() == []
+    rm.on_bar_close("X", {"time": "2026-01-02 09:25:00", "open": 100.5})  # -> pending
+    assert store.get_trades() == []
+    rm.on_bar_close("X", {"time": "2026-01-02 09:30:00", "open": 101.0})  # filled
+    trades = store.get_trades()
+    assert len(trades) == 1
+    assert trades[0]["qty"] == 10 and trades[0]["ts"] == "2026-01-02 09:30:00"
+    assert rm.broker.get_positions()[0]["qty"] == 10.0
+
+
+def test_execute_order_buffers_fill_without_store():
+    rm = _gate()
+    res = rm.execute_order({"symbol": "X", "side": "buy", "qty": 10, "price": 100.0})
+    assert res["status"] == "open"
+    rm.on_bar_close("X", {"time": "2026-01-02 09:25:00", "open": 100.5})
+    rm.on_bar_close("X", {"time": "2026-01-02 09:30:00", "open": 101.0})
+    assert len(rm.get_fills()) == 1
+    assert rm.get_fills()[0]["price"] == 101.0 * (1.0 + 2.0 / 10_000.0)

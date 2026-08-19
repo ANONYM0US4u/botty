@@ -139,3 +139,50 @@ def test_prunes_old_runs_per_market(tmp_path):
     nse = sorted(p.name for p in (th.ck_root / "nse").iterdir())
     assert nse == [f"TCS.NS-2026010{i}-000000" for i in (1, 2, 3)]
     assert (th.ck_root / "crypto" / "BTCUSDT-20260105-000000").exists()
+
+
+def test_replay_never_writes_live_ledger(tmp_path, monkeypatch):
+    # M2: replay evaluations must not pollute decisions/fills/equity.
+    import engine.training.theater as mod
+    import numpy as np
+
+    class AlwaysLong:
+        device = "cpu"
+        def predict(self, obs, deterministic=True):
+            return (np.array(1), None)
+    monkeypatch.setattr(mod, "load_policy", lambda *a, **k: AlwaysLong())
+    th, store = _theater(tmp_path)
+    store.save_bars("RELIANCE.NS", _bars(400), 5)
+    run = th.ck_root / "nse" / "RELIANCE.NS-20260101-000000"
+    run.mkdir(parents=True)
+    ck = run / "ppo_1000.zip"
+    ck.write_text("x")
+    th._spawn_replay("RELIANCE.NS", ck)
+    th._replay_thread.join(60)
+    assert store.get_decisions(symbol="RELIANCE.NS", limit=1) == []
+    assert store.get_trades() == []
+    assert store.get_equity() == []
+    assert store.get_metrics("equity") == []
+
+
+def test_reset_returns_error_when_training_stuck(tmp_path, monkeypatch):
+    import threading
+    gate = threading.Event()
+
+    class GatePPO:
+        def __init__(self, *a, **kw):
+            pass
+        def learn(self, **kw):
+            gate.wait(60)
+        def save(self, path):
+            open(path, "w").write("x")
+    monkeypatch.setattr("stable_baselines3.PPO", GatePPO)
+    th, _ = _theater(tmp_path)
+    th.start("RELIANCE.NS")
+    time.sleep(0.2)
+    out = th.reset()
+    assert "error" in out  # training thread still alive -> no clobber
+    assert th.state()["status"] in ("running", "starting", "stopping")
+    gate.set()            # unstick: learn returns, loop sees stop and exits
+    assert th.wait_idle(15)
+    assert th.state()["status"] == "stopped"

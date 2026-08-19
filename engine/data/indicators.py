@@ -52,19 +52,34 @@ def add_indicators(df: pl.DataFrame) -> pl.DataFrame:
     macd = (pl.col("close").map_batches(lambda s: _ewm(s, 12))
             - pl.col("close").map_batches(lambda s: _ewm(s, 26)))
     signal = macd.map_batches(lambda s: _ewm(s, 9))
-    rng = (pl.col("high") - pl.col("low")).replace(0.0, 1e-12)
+    raw_rng = pl.col("high") - pl.col("low")
+    rng = raw_rng.replace(0.0, 1e-12)
+    zero_rng = raw_rng == 0.0
     high30 = pl.col("high").rolling_max(30)
+    safe_close = pl.col("close").replace(0.0, 1e-12)
+    safe_prev = pl.col("close").shift(1).replace(0.0, 1e-12)
+    safe_high30 = high30.replace(0.0, 1e-12)
     out = out.with_columns([
         ((pl.col("close") - mid20) / (2.0 * std20).replace(0.0, 1e-12))
         .alias("boll_pos"),
-        ((macd - signal) / pl.col("close")).alias("macd_hist"),
-        ((pl.col("close") - pl.col("open")).abs() / rng).alias("body_pct"),
-        ((pl.col("high") - pl.max_horizontal("open", "close")) / rng)
+        ((macd - signal) / safe_close)
+        .replace(float("inf"), 0.0).replace(float("-inf"), 0.0)
+        .alias("macd_hist"),
+        pl.when(zero_rng).then(1.0)
+        .otherwise(((pl.col("close") - pl.col("open")).abs() / rng))
+        .alias("body_pct"),
+        pl.when(zero_rng).then(0.0)
+        .otherwise(((pl.col("high") - pl.max_horizontal("open", "close")) / rng))
         .alias("upper_wick_pct"),
-        ((pl.min_horizontal("open", "close") - pl.col("low")) / rng)
+        pl.when(zero_rng).then(0.0)
+        .otherwise(((pl.min_horizontal("open", "close") - pl.col("low")) / rng))
         .alias("lower_wick_pct"),
-        ((high30 - pl.col("close")) / high30).alias("dist_to_high_pct"),
-        (pl.col("close") / pl.col("close").shift(1) - 1.0).alias("ret1"),
+        ((high30 - pl.col("close")) / safe_high30)
+        .replace(float("inf"), 0.0).replace(float("-inf"), 0.0)
+        .alias("dist_to_high_pct"),
+        (pl.col("close") / safe_prev - 1.0)
+        .replace(float("inf"), 0.0).replace(float("-inf"), 0.0)
+        .alias("ret1"),
         pl.col("close").rolling_std(20).alias("vol20"),
         (pl.col("high").rolling_max(30) - pl.col("low").rolling_min(30)).alias("session_band"),
     ])

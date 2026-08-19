@@ -73,6 +73,12 @@ export default function Theater() {
     mode.refetch()
   }
   const inTrade = md?.mode === "trade"
+  const symbols = md?.symbols?.[md.market] ?? []
+  const symbolInMarket = symbols.includes(symbol)
+  if (md && symbols.length > 0 && !symbolInMarket) {
+    const fallback = symbols.includes("BTCUSDT") ? "BTCUSDT" : symbols[0]
+    if (symbol !== fallback) setSymbol(fallback)
+  }
 
   return (
     <main>
@@ -116,8 +122,11 @@ export default function Theater() {
         </p>
         <p className="muted">{state.phase || " "}</p>
         {state.error && <p className="err">{state.error}</p>}
-        <input value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="Symbol (e.g. BTCUSDT)" disabled={running || inTrade} />
-        <button onClick={() => cmd("start")} disabled={running || inTrade}>Start</button>
+        <input value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="Symbol (e.g. BTCUSDT)" disabled={running || inTrade} list="theater-symbols" />
+        <datalist id="theater-symbols">
+          {symbols.map((s) => <option key={s} value={s} />)}
+        </datalist>
+        <button onClick={() => cmd("start")} disabled={running || inTrade || !symbolInMarket}>Start</button>
         <button onClick={() => cmd("stop")} disabled={!running}>Stop</button>
         <button onClick={() => cmd("reset")} disabled={running || inTrade}>Reset</button>
         {msg && <p className="err">{msg}</p>}

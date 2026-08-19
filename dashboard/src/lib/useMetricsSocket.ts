@@ -16,6 +16,7 @@ export function useMetricsSocket(onEvent: (e: TheaterEvent) => void) {
       ws = new WebSocket(`${BASE.replace(/^http/, "ws")}/ws/metrics`)
       ws.onopen = () => { retry = 0 }
       ws.onmessage = (e) => {
+        if (closed) return
         try {
           const m = JSON.parse(e.data as string)
           if (m.name && m.payload) cb.current(m)
@@ -24,6 +25,7 @@ export function useMetricsSocket(onEvent: (e: TheaterEvent) => void) {
       ws.onclose = () => {
         if (!closed) setTimeout(open, Math.min(1000 * 2 ** retry++, 10_000))
       }
+      ws.onerror = () => { ws?.close() }
     }
     open()
     return () => { closed = true; ws?.close() }

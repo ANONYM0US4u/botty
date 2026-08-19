@@ -37,3 +37,13 @@ def test_emit_json_from_worker_thread_keeps_client():
         await asyncio.sleep(0.05)
         assert len(received) == 2, "client must stay registered"
     asyncio.run(go())
+
+
+def test_register_caps_clients():
+    em = MetricsEmitter(max_clients=2)
+    a, b, c = object(), object(), object()
+    assert em.register(a) is True
+    assert em.register(b) is True
+    assert em.register(c) is False  # cap reached -> route must close it
+    em.unregister(a)
+    assert em.register(c) is True

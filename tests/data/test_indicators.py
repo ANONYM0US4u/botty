@@ -72,3 +72,26 @@ def test_pattern_indicators_no_nan_after_warmup():
     for col in ["boll_pos", "macd_hist", "body_pct", "upper_wick_pct",
                 "lower_wick_pct", "dist_to_high_pct"]:
         assert tail[col].null_count() == 0, col
+
+
+def test_doji_zero_range_bars_are_well_formed():
+    # M10: high==low bars must produce body_pct=1, wicks=0 (no NaN, sum=1).
+    rows = [{"time": f"2026-01-02 09:{15 + i:02d}:00", "open": 100.0,
+             "high": 100.0, "low": 100.0, "close": 100.0,
+             "volume": 1000.0} for i in range(50)]
+    out = add_indicators(pl.DataFrame(rows))
+    tail = out.tail(10)
+    assert (tail["body_pct"] == 1.0).all()
+    assert (tail["upper_wick_pct"] == 0.0).all()
+    assert (tail["lower_wick_pct"] == 0.0).all()
+    for col in ["boll_pos", "macd_hist", "dist_to_high_pct", "ret1"]:
+        assert tail[col].null_count() == 0
+        assert tail[col].is_finite().all()
+
+
+def test_no_infinity_from_zero_prices():
+    rows = [{"time": f"2026-01-02 09:{15 + i:02d}:00", "open": 0.0, "high": 0.0,
+             "low": 0.0, "close": 0.0, "volume": 0.0} for i in range(50)]
+    out = add_indicators(pl.DataFrame(rows))
+    for col in ["macd_hist", "dist_to_high_pct", "ret1", "boll_pos"]:
+        assert out[col].is_finite().all()

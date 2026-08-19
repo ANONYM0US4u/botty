@@ -56,18 +56,21 @@ class TrainingTheater:
                     "phase": self._phase, "error": self._error}
 
     def start(self, symbol: str) -> dict:
+        market = self._market_of.get(symbol)
+        if market is None:
+            return {"error": f"symbol {symbol} not configured"}
         with self._lock:
             if self._status in ("running", "starting", "stopping"):
                 raise RuntimeError("already running")
-            market = self._market_of.get(symbol)
-            if market is None:
-                return {"error": f"symbol {symbol} not configured"}
-            try:
-                bars = self.fetch_bars(symbol)
-            except Exception as e:
-                return {"error": f"fetch failed: {e}"}
-            if bars is None or bars.height == 0:
-                return {"error": "fetch returned no bars"}
+        try:
+            bars = self.fetch_bars(symbol)
+        except Exception as e:
+            return {"error": f"fetch failed: {e}"}
+        if bars is None or bars.height == 0:
+            return {"error": "fetch returned no bars"}
+        with self._lock:
+            if self._status in ("running", "starting", "stopping"):
+                raise RuntimeError("already running")
             self.store.save_bars(symbol, bars, 5)
             self._symbol = symbol
             self._market = market
@@ -82,7 +85,7 @@ class TrainingTheater:
             self._lb_ready = False
             self._prune(market)
             self._train_thread = threading.Thread(
-                target=self._train_loop, args=(symbol, bars, run_dir),
+                target=self._train_loop, args=(symbol, bars, run_dir, self._run_id),
                 daemon=True)
             self._train_thread.start()
             self._status = "running"
@@ -97,7 +100,8 @@ class TrainingTheater:
 
     def reset(self) -> dict:
         self.stop()
-        self.wait_idle(30)
+        if not self.wait_idle(30):
+            return {"error": "training still active; try again shortly"}
         with self._lock:
             if self._run_id and self._market:
                 shutil.rmtree(self.ck_root / self._market / self._run_id,
@@ -133,17 +137,20 @@ class TrainingTheater:
 
     # ---- internals ------------------------------------------------------
 
-    def _train_loop(self, symbol, bars, run_dir: Path):
+    def _train_loop(self, symbol, bars, run_dir: Path, run_id: str):
+        cost_pct = (self.cfg.get("brokers", {}).get("slippage_bps", 2.0) / 10_000.0)
         try:
             env = TradingEnv(symbol, bars, window=self.cfg["training"].get(
-                "window_bars", 120), seed=self.cfg["training"]["seed"])
+                "window_bars", 120), seed=self.cfg["training"]["seed"],
+                cost_pct=cost_pct)
             total = self.cfg["training"]["total_timesteps"]
             steps = 0
             while steps < total and not self._stop.is_set():
                 self._set_phase(f"training {steps}/{total}")
                 chunk = min(_CHUNK, total - steps)
                 cb = _TheaterCallback(self.emitter, self.store,
-                                      datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                                      datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                      stop_check=self._stop.is_set)
                 if steps == 0:
                     from stable_baselines3 import PPO
                     model = PPO("MlpPolicy", env, seed=self.cfg["training"]["seed"],
@@ -151,6 +158,8 @@ class TrainingTheater:
                 else:
                     model = load_policy(run_dir / "latest.zip", env=env)
                 model.learn(total_timesteps=chunk, callback=cb)
+                if self._stop.is_set():
+                    break  # abort without saving/replaying a half-stop checkpoint
                 steps += chunk
                 self._set_steps(steps)
                 path = run_dir / f"ppo_{steps}.zip"
@@ -170,8 +179,9 @@ class TrainingTheater:
                 self._status = "stopped"
         except Exception as e:
             with self._lock:
-                self._status = "error"
-                self._error = str(e)
+                if self._run_id == run_id:
+                    self._status = "error"
+                    self._error = str(e)
             if self.emitter is not None and hasattr(self.emitter, "emit_json"):
                 self.emitter.emit_json("theater/error", {"error": str(e)})
 
@@ -188,11 +198,15 @@ class TrainingTheater:
                 sched = Scheduler(risk, self.store, policy,
                                   {"symbols": [symbol],
                                    "window_bars": self.cfg["training"].get(
-                                       "window_bars", 120)})
+                                       "window_bars", 120)},
+                                  persist=False)
+                decisions = []
                 for row in window_bars:
-                    sched.on_bar_close(symbol, row)
-                fills = [dict(f) for f in self.store.get_trades()]
-                decisions = self.store.get_decisions(symbol=symbol, limit=500)
+                    summary = sched.on_bar_close(symbol, row)
+                    decisions.append({"ts": row["time"], "symbol": symbol,
+                                      "action": summary["action"],
+                                      "probs": str(summary.get("probs", []))})
+                fills = risk.get_fills()
                 traits = compute_traits(fills, decisions, self.cfg["risk"])
                 if self.emitter is not None and hasattr(self.emitter, "emit_json"):
                     self.emitter.emit_json("theater/traits", traits)
@@ -233,7 +247,9 @@ class TrainingTheater:
                 _VALIDATION_WINDOW else bars
             env = TradingEnv(self._symbol or "X", window,
                              window=self.cfg["training"].get("window_bars", 120),
-                             seed=0)
+                             seed=0,
+                             cost_pct=(self.cfg.get("brokers", {}).get(
+                                 "slippage_bps", 2.0) / 10_000.0))
             obs, _ = env.reset()
             curve = [env.unwrapped.initial_cash]
             done = False

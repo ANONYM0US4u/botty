@@ -5,6 +5,7 @@ import pytest
 
 from engine.data.indicators import add_indicators
 from engine.data.store import DataStore
+from engine.live.risk import RiskGateway
 from engine.trading.mode import BotMode
 
 
@@ -33,11 +34,14 @@ def _bars(n=400, start="2026-01-02 09:15:00"):
 def _stub_policy():
     class P:
         def __init__(self, *a, **kw):
-            pass
+            self.n = 0
 
         def predict(self, obs, deterministic=True):
             import numpy as np
-            return (np.array(0), None)
+            # rotate flat/long/short so the loop exercises every branch
+            a = self.n % 3
+            self.n += 1
+            return (np.array(a), None)
 
         @property
         def device(self):
@@ -88,14 +92,77 @@ def test_trade_mode_processes_bars_and_records_fills(tmp_path, monkeypatch):
     assert st["mode"] == "trade"
     assert st["trade"]["running"]
     for _ in range(200):
-        if m._last_bar_seen.get("BTCUSDT"):
+        if len(store.get_decisions(symbol="BTCUSDT", limit=100)) >= 3:
             break
         time.sleep(0.05)
     assert m._last_bar_seen.get("BTCUSDT"), "trade loop never processed a bar"
-    dec = store.get_decisions(symbol="BTCUSDT", limit=1)
+    dec = store.get_decisions(symbol="BTCUSDT", limit=100)
     assert dec, "no decisions recorded"
+    actions = {d["action"] for d in dec}
+    assert len(actions) >= 2, "decisions must vary as the observation window advances (H2)"
+    assert any(d["action"] != "flat" for d in dec), "obs-aware policy never went long"
     m.set_mode("idle")
     assert not m.state()["trade"]["running"]
+
+
+def test_kill_switch_blocks_trades_through_shared_risk(tmp_path, monkeypatch):
+    # H1: the API and the trade loop share one RiskGateway; arming the
+    # kill switch must stop the loop from placing orders.
+    m, store, cfg = _mode(tmp_path, monkeypatch)
+    _seed_policy(tmp_path)
+    m._risk.set_kill_switch(True)
+    m.set_market("crypto")
+    m.set_mode("trade")
+    for _ in range(200):
+        if len(store.get_decisions(symbol="BTCUSDT", limit=200)) >= 3:
+            break
+        time.sleep(0.05)
+    assert m._last_bar_seen.get("BTCUSDT")
+    dec = store.get_decisions(symbol="BTCUSDT", limit=200)
+    assert len(dec) >= 3
+    assert dec and all(d["action"] == "flat" for d in dec)
+    assert store.get_trades() == []  # kill switch: no fills, no qty
+    m.set_mode("idle")
+
+
+def test_start_theater_guards_mode_and_market(tmp_path, monkeypatch):
+    m, _, _ = _mode(tmp_path, monkeypatch)
+    monkeypatch.setattr(m.theater, "start", lambda s: {"status": "running"})
+    m.set_mode("trade")
+    out = m.start_theater("BTCUSDT")
+    assert out.get("code") == "mode" and "error" in out
+    m.set_mode("idle")
+    m.set_market("nse")
+    out = m.start_theater("BTCUSDT")
+    assert out.get("code") == "market" and "error" in out
+    out = m.start_theater("MISSING.NS")
+    assert out.get("code") == "symbol"
+    m.set_market("crypto")
+    out = m.start_theater("BTCUSDT")
+    assert "error" not in out
+
+
+def test_set_mode_trade_fails_when_training_wont_stop(tmp_path, monkeypatch):
+    class StuckTheater:
+        def state(self):
+            return {"status": "running"}
+        def stop(self):
+            return {"status": "stopping"}
+        def wait_idle(self, timeout):
+            return False
+        @property
+        def ck_root(self):
+            return tmp_path / "ck"
+    from engine.brokers.simulator import SimulatorAdapter
+    from engine.data.store import DataStore
+    store = DataStore(tmp_path / "t.db", tmp_path / "pq")
+    store.init_schema()
+    m = BotMode(store, None, _cfg(tmp_path), StuckTheater(),
+                lambda s: _bars(),
+                risk=RiskGateway(SimulatorAdapter(), _cfg(tmp_path)["risk"]))
+    out = m.set_mode("trade")
+    assert "error" in out and "did not stop" in out["error"]
+    assert m.state()["mode"] == "idle"
 
 
 def test_trade_skips_symbols_without_policy(tmp_path, monkeypatch):

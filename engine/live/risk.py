@@ -4,12 +4,20 @@ from datetime import datetime
 
 
 class RiskGateway:
-    def __init__(self, broker, risk_cfg: dict):
+    def __init__(self, broker, risk_cfg: dict, store=None,
+                 flatten_symbols: set[str] | None = None):
         self.broker = broker          # ONLY component allowed to hold the broker
         self.cfg = risk_cfg
+        self.store = store            # optional: persist fills/orders on execution
+        self.flatten_symbols = flatten_symbols  # None = flatten everything
         self._killed = False
         self._last_bar_ts: float | None = None
+        self._last_prices: dict[str, float] = {}
         self._retry_delays = [0.5, 1.0, 2.0]
+        self._fills: list[dict] = []
+
+    def get_fills(self) -> list[dict]:
+        return list(self._fills)
 
     def set_kill_switch(self, active: bool) -> None:
         self._killed = active
@@ -19,6 +27,9 @@ class RiskGateway:
 
     def set_last_bar_ts(self, ts: float | None) -> None:
         self._last_bar_ts = ts
+
+    def set_last_price(self, symbol: str, price: float) -> None:
+        self._last_prices[symbol] = float(price)
 
     def check_order(self, order: dict, positions: list[dict], equity: float,
                     day_pnl: float) -> tuple[bool, str]:
@@ -53,21 +64,54 @@ class RiskGateway:
             if attempt:
                 time.sleep(delay)
             try:
-                return self.broker.place_order(order)
+                res = self.broker.place_order(order)
+                self._record_fill(res)
+                return res
             except TransientBrokerError:
                 continue
             except PermanentBrokerError as e:
                 return {"status": "failed", "reason": str(e), "retryable": False}
         return {"status": "failed", "reason": "transient retries exhausted", "retryable": True}
 
+    def _record_fill(self, res: dict) -> None:
+        """Persist or buffer a broker result that came back as a fill."""
+        if res.get("status") != "filled":
+            return
+        fill = {"order_id": res.get("id", ""), "symbol": res.get("symbol", ""),
+                "side": res.get("side", ""), "qty": res.get("qty", 0.0),
+                "price": res.get("fill_price", res.get("price", 0.0)),
+                "ts": res.get("ts", "")}
+        if self.store is not None:
+            self.store.append_order(res)
+            self.store.append_fill(fill)
+        else:
+            self._fills.append(fill)
+
+    def on_bar_close(self, symbol: str, bar: dict) -> list[dict]:
+        """Let the broker settle queued orders at this bar's open; record fills."""
+        fills = self.broker.on_bar_close(symbol, bar)
+        for f in fills:
+            self._record_fill(f)
+        return fills
+
     def flatten_all(self, reason: str) -> None:
         for pos in self.get_positions():
+            if self.flatten_symbols is not None \
+                    and pos["symbol"] not in self.flatten_symbols:
+                continue  # per-market flatten scope
+            price = self._last_prices.get(pos["symbol"], 0.0)
+            if price <= 0:
+                continue  # cannot size a flatten without a price
             side = "sell" if pos["qty"] > 0 else "buy"
-            self.broker.place_order({"symbol": pos["symbol"], "side": side,
-                                     "qty": abs(pos["qty"]), "price": 0.0,
-                                     "market": True})
+            res = self.broker.place_order({"symbol": pos["symbol"], "side": side,
+                                           "qty": abs(pos["qty"]), "price": price,
+                                           "market": True})
+            self._record_fill(res)
 
-    def maybe_flatten_before_close(self, now: datetime) -> None:
+    def maybe_flatten_before_close(self, now: datetime, symbol: str | None = None) -> None:
+        if symbol is not None and self.flatten_symbols is not None \
+                and symbol not in self.flatten_symbols:
+            return  # 24/7 markets do not flatten at the NSE close
         limit = self.cfg.get("flatten_at", "15:15")
         hh, mm = map(int, limit.split(":"))
         if now.hour > hh or (now.hour == hh and now.minute >= mm):

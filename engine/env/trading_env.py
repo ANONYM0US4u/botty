@@ -13,8 +13,13 @@ class TradingEnv(gym.Env):
     def __init__(self, symbol, bars, initial_cash=100_000.0, cost_pct=0.001,
                  window=120, seed=42, holding_penalty=0.0):
         super().__init__()
+        if any(c not in bars.columns for c in ("open", "high", "low", "close", "volume")):
+            raise ValueError("bars missing OHLCV columns")
+        if any(c not in bars.columns for c in _FEATURES):
+            from engine.data.indicators import add_indicators
+            bars = add_indicators(bars)
         self.symbol = symbol
-        self.bars = bars.fill_null(strategy="forward").fill_null(0.0)
+        self.bars = bars.fill_nan(0.0).fill_null(strategy="forward").fill_null(0.0)
         self.initial_cash = float(initial_cash)
         self.cost_pct = cost_pct
         self.window = window
@@ -42,7 +47,15 @@ class TradingEnv(gym.Env):
         super().reset(seed=seed)
         if seed is not None:
             self._rng = np.random.default_rng(seed)
-        self._idx = self.window
+        start_idx = None
+        if options is not None:
+            start_idx = options.get("start_idx")
+        if start_idx is None:
+            start_idx = self.window
+        start_idx = int(start_idx)
+        if start_idx < self.window or start_idx >= len(self.bars):
+            start_idx = self.window
+        self._idx = start_idx
         self.cash = self.initial_cash
         self.position = 0.0
         self.equity = self.initial_cash

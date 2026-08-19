@@ -47,6 +47,7 @@ export interface ModeState {
   mode: "idle" | "train" | "trade"
   switching: boolean
   markets: string[]
+  symbols: Record<string, string[]>
   trade: TradeState
   train: TheaterState
 }

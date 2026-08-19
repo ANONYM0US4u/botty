@@ -56,11 +56,14 @@ def atomic_save(model, path) -> None:
 
 
 class _TheaterCallback(_MetricCallback):
-    def __init__(self, emitter, store, ts_name: str):
+    def __init__(self, emitter, store, ts_name: str, stop_check=None):
         super().__init__(emitter, store, ts_name)
         self._probs = deque(maxlen=100)
+        self._stop_check = stop_check
 
     def _on_step(self) -> bool:
+        if self._stop_check is not None and self._stop_check():
+            return False  # abort learn() as soon as a stop is requested
         try:
             super()._on_step()
         except Exception:

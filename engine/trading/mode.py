@@ -20,7 +20,7 @@ class BotMode:
     mode:   idle | train (theater) | trade (live paper-trading loop)
     """
 
-    def __init__(self, store, emitter, cfg: dict, theater, fetch_bars):
+    def __init__(self, store, emitter, cfg: dict, theater, fetch_bars, risk=None):
         self.store = store
         self.emitter = emitter
         self.cfg = cfg
@@ -30,11 +30,13 @@ class BotMode:
                         "nse": list(cfg["instruments"]["stocks"])}
         self._market_of = {s: m for m, syms in self.markets.items()
                            for s in syms}
-        self._risk = RiskGateway(
-            SimulatorAdapter(
-                slippage_bps=cfg["brokers"].get("slippage_bps", 2.0),
-                latency_bars=cfg["brokers"].get("latency_bars", 1)),
-            cfg["risk"])
+        if risk is None:
+            risk = RiskGateway(
+                SimulatorAdapter(
+                    slippage_bps=cfg["brokers"].get("slippage_bps", 2.0),
+                    latency_bars=cfg["brokers"].get("latency_bars", 1)),
+                cfg["risk"])
+        self._risk = risk
         self._lock = threading.RLock()
         self._market = "crypto"
         self._mode = "idle"
@@ -54,6 +56,7 @@ class BotMode:
             return {"market": self._market, "mode": self._mode,
                     "switching": self._switching,
                     "markets": list(self.markets.keys()),
+                    "symbols": {m: list(s) for m, s in self.markets.items()},
                     "trade": self._trade_state(),
                     "train": self.theater.state()}
 
@@ -67,6 +70,20 @@ class BotMode:
     def can_train(self) -> bool:
         with self._lock:
             return self._mode != "trade"
+
+    def start_theater(self, symbol: str) -> dict:
+        """Atomic start gate: enforces mode + market match under one lock."""
+        with self._lock:
+            if self._mode == "trade":
+                return {"error": "switch mode to train first", "code": "mode"}
+            market = self._market_of.get(symbol)
+            if market is None:
+                return {"error": f"symbol {symbol} not configured", "code": "symbol"}
+            if market != self._market:
+                return {"error": f"symbol {symbol} belongs to '{market}' "
+                                 f"but the active market is '{self._market}'",
+                        "code": "market"}
+            return self.theater.start(symbol)
 
     # ---------------- switching ----------------
 
@@ -91,7 +108,8 @@ class BotMode:
             self._stop_trade_locked()
             if mode == "trade":
                 self.theater.stop()
-                self.theater.wait_idle(30)
+                if not self.theater.wait_idle(30):
+                    return {"error": "training did not stop in time; try again"}
                 self._start_trade_locked()
             self._mode = mode
             return self.state()
@@ -101,33 +119,35 @@ class BotMode:
             self._trade_stop.set()
             self._trade_thread.join(timeout=70)
             self._trade_thread = None
-        self._trade_stop.clear()
+        self._trade_stop = threading.Event()  # fresh event per generation
         self._policy_cache.clear()
 
     def _start_trade_locked(self) -> None:
         self._trade_error = ""
         self._last_bar_seen.clear()
         self._trade_thread = threading.Thread(
-            target=self._trade_loop, args=(self._market,), daemon=True)
+            target=self._trade_loop, args=(self._market, self._trade_stop),
+            daemon=True)
         self._trade_thread.start()
 
     # ---------------- trade loop ----------------
 
-    def _trade_loop(self, market: str) -> None:
+    def _trade_loop(self, market: str, stop_event: threading.Event) -> None:
         symbols = list(self.markets[market])
-        while not self._trade_stop.is_set():
+        while not stop_event.is_set():
             try:
-                self._poll(market, symbols)
+                self._poll(market, symbols, stop_event)
             except Exception as e:
                 self._trade_error = str(e)
                 if self.emitter is not None:
                     self.emitter.emit_json(
                         "trade/error", {"error": str(e)})
-            self._trade_stop.wait(_POLL_SECONDS)
+            stop_event.wait(_POLL_SECONDS)
 
-    def _poll(self, market: str, symbols: list[str]) -> None:
+    def _poll(self, market: str, symbols: list[str],
+              stop_event: threading.Event) -> None:
         for symbol in symbols:
-            if self._trade_stop.is_set():
+            if stop_event.is_set():
                 return
             try:
                 bars = self.fetch_bars(symbol)
@@ -152,7 +172,7 @@ class BotMode:
             new_bars = (bars.filter(pl.col("time") > last)
                         if last else bars.tail(400))
             for row in new_bars.to_dicts():
-                if self._trade_stop.is_set():
+                if stop_event.is_set():
                     return
                 sched.on_bar_close(symbol, row)
                 self._last_bar_seen[symbol] = row["time"]

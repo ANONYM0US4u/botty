@@ -155,15 +155,16 @@ def create_app(store, risk, cfg: dict, theater=None, mode=None) -> FastAPI:
     def theater_start(body: TheaterStartBody):
         if _require_theater() is None:
             return JSONResponse({"error": "theater not configured"}, status_code=503)
-        if mode is not None and not mode.can_train():
-            return JSONResponse({"error": "switch mode to train first"},
-                                status_code=409)
         try:
-            out = theater.start(body.symbol)
+            if mode is not None:
+                out = mode.start_theater(body.symbol)
+            else:
+                out = theater.start(body.symbol)
         except RuntimeError:
             return JSONResponse({"error": "already running"}, status_code=409)
         if "error" in out:
-            return JSONResponse(out, status_code=400)
+            status = 409 if out.get("code") == "mode" else 400
+            return JSONResponse(out, status_code=status)
         return out
 
     @app.post("/api/theater/stop")
@@ -186,8 +187,14 @@ def create_app(store, risk, cfg: dict, theater=None, mode=None) -> FastAPI:
 
     @app.websocket("/ws/metrics")
     async def ws_metrics(ws: WebSocket):
+        origin = ws.headers.get("origin") or ""
+        if origin and origin not in _CORS_ORIGINS:
+            await ws.close(code=4403, reason="origin not allowed")
+            return
         await ws.accept()
-        emitter.register(ws)
+        if not emitter.register(ws):
+            await ws.close(code=1013, reason="too many clients")
+            return
         try:
             while True:
                 await ws.receive_text()

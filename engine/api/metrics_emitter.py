@@ -3,16 +3,20 @@ import json
 
 
 class MetricsEmitter:
-    def __init__(self):
+    def __init__(self, max_clients: int = 20):
         self._clients: set = set()
+        self._max_clients = max_clients
         self._loop: asyncio.AbstractEventLoop | None = None
 
-    def register(self, client) -> None:
+    def register(self, client) -> bool:
+        if len(self._clients) >= self._max_clients:
+            return False
         self._clients.add(client)
         try:
             self._loop = asyncio.get_running_loop()
         except RuntimeError:
             pass
+        return True
 
     def unregister(self, client) -> None:
         self._clients.discard(client)

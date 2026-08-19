@@ -1,17 +1,20 @@
 from datetime import datetime
 import time
+import polars as pl
 from stable_baselines3.common.utils import obs_as_tensor
 from engine.env.trading_env import TradingEnv
 from engine.data.indicators import add_indicators
 
 
 class Scheduler:
-    def __init__(self, risk_gateway, store, policy, cfg: dict):
+    def __init__(self, risk_gateway, store, policy, cfg: dict, persist: bool = True):
         self.risk = risk_gateway          # execution ONLY via RiskGateway
         self.store = store
         self.policy = policy
         self.symbols = cfg.get("symbols", [])
         self.window = cfg.get("window_bars", 120)
+        self.qty_pct = float(cfg.get("qty_pct", 30.0)) / 100.0
+        self.persist = persist            # False = replay sandbox (no ledger writes)
 
     def on_bar_close(self, symbol: str, bar: dict) -> dict:
         ts = bar.get("time", "")
@@ -20,12 +23,21 @@ class Scheduler:
         except ValueError:
             bar_dt = datetime.now()
         self.risk.set_last_bar_ts(time.time())
-        self.risk.maybe_flatten_before_close(bar_dt)
+        self.risk.set_last_price(symbol, float(bar.get("close", 0.0) or 0.0))
+        self.risk.maybe_flatten_before_close(bar_dt, symbol)
+        self.risk.on_bar_close(symbol, bar)  # settle queued orders at this bar
         bars = add_indicators(self.store.get_bars(symbol))
         if bars.height < self.window + 2:
             return {"action": "hold", "reason": "insufficient bars"}
         env = TradingEnv(symbol, bars, window=self.window, seed=0)
-        obs, _ = env.reset()
+        idx = None
+        try:
+            hit = bars.with_row_index().filter(pl.col("time") == ts)
+            if hit.height == 1:
+                idx = int(hit["index"][0])
+        except Exception:
+            idx = None
+        obs, _ = env.reset(options={"start_idx": idx})
         action, _ = self.policy.predict(obs, deterministic=True)
         probs = []
         try:
@@ -38,18 +50,22 @@ class Scheduler:
         target = {0: "flat", 1: "long", 2: "short"}[int(action)]
         summary = {"action": target, "reason": "", "probs": probs}
         if target != "flat":
+            price = float(bar.get("close", 0.0) or 0.0)
+            qty = max(1, int(self.risk.get_balance() * self.qty_pct / price)) \
+                if price > 0 else 1
             order = {"symbol": symbol,
                      "side": "buy" if target == "long" else "sell",
-                     "qty": 1, "price": float(bar["close"])}
+                     "qty": qty, "price": price}
             res = self.risk.execute_order(order)
             if res.get("status") == "failed":
                 summary = {"action": "flat", "reason": res.get("reason", "risk-gated")}
-        self.store.append_decision({"ts": ts, "symbol": symbol,
-                                    "action": summary["action"], "probs": str(probs),
-                                    "features": "[]", "attribution": "[]"})
-        eq = self.risk.get_balance()
-        self.store.append_equity(ts, eq)
-        self.store.append_metric("equity", eq, ts)
+        if self.persist:
+            self.store.append_decision({"ts": ts, "symbol": symbol,
+                                        "action": summary["action"], "probs": str(probs),
+                                        "features": "[]", "attribution": "[]"})
+            eq = self.risk.get_balance()
+            self.store.append_equity(ts, eq)
+            self.store.append_metric("equity", eq, ts)
         return summary
 
     def flatten_all(self, reason: str) -> None:
