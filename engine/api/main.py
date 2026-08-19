@@ -1,4 +1,6 @@
 from datetime import datetime
+import time
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -53,7 +55,7 @@ class Promotion:
         return self.state
 
 
-def create_app(store, risk, cfg: dict, theater=None, mode=None) -> FastAPI:
+def create_app(store, risk, cfg: dict, theater=None, mode=None, heartbeat=None) -> FastAPI:
     app = FastAPI(title="Trading Bot Engine")
     app.add_middleware(
         CORSMiddleware,
@@ -112,6 +114,12 @@ def create_app(store, risk, cfg: dict, theater=None, mode=None) -> FastAPI:
                                "probs": "[]", "features": "[]", "attribution": "[]"})
         store.append_metric("promotion", _PROMOTION_ORDINAL[new_state], ts)
         return {"state": new_state}
+
+    @app.post("/api/heartbeat")
+    def heartbeat_route(closing: int = 0):
+        if heartbeat is not None:
+            heartbeat.touch(time.time(), closing=bool(closing))
+        return {"ok": True}
 
     @app.get("/api/decisions")
     def decisions(symbol: str | None = None, limit: int = 100):

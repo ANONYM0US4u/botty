@@ -1,6 +1,7 @@
 import type { Metadata } from "next"
 import Providers from "./providers"
 import Tour from "@/components/Tour"
+import Heartbeat from "@/components/Heartbeat"
 import "./globals.css"
 
 export const metadata: Metadata = { title: "Trading Bot", description: "Self-learning trading bot dashboard" }
@@ -11,6 +12,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <Providers>{children}</Providers>
         <Tour />
+        <Heartbeat />
       </body>
     </html>
   )

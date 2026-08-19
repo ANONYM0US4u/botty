@@ -15,7 +15,7 @@ if not exist ".venv\Scripts\python.exe" (
 )
 
 if not exist "dashboard\.next\BUILD_ID" (
-    echo Building dashboard (first run, takes ~1 min)...
+    echo Building dashboard on first run, takes about 1 minute...
     pushd dashboard
     call npm run build
     popd
