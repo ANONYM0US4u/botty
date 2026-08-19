@@ -142,5 +142,5 @@ def evaluate_ppo(model, env: gym.Env, episodes: int, seed: int) -> dict:
             "equity_series": [env.unwrapped.initial_cash] + [e for e in equities]}
 
 
-def load_policy(path: str | Path) -> PPO:
-    return PPO.load(str(path))
+def load_policy(path: str | Path, env=None) -> PPO:
+    return PPO.load(str(path), env=env)

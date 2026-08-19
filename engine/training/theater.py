@@ -38,7 +38,8 @@ class TrainingTheater:
         self._error = ""
         self._lock = threading.Lock()
         self._lb_cache = None
-        self._lb_key = None
+        self._lb_ready = True
+        self._lb_thread: threading.Thread | None = None
 
     # ---- public API -----------------------------------------------------
 
@@ -67,6 +68,8 @@ class TrainingTheater:
             run_dir = self.ck_root / self._run_id
             run_dir.mkdir(parents=True, exist_ok=True)
             self._stop.clear()
+            self._lb_cache = None
+            self._lb_ready = False
             self._train_thread = threading.Thread(
                 target=self._train_loop, args=(symbol, bars, run_dir),
                 daemon=True)
@@ -91,27 +94,22 @@ class TrainingTheater:
             self._symbol = None
             self._run_id = None
             self._steps = 0
+            self._phase = ""
+            self._error = ""
             self._lb_cache = None
-            self._lb_key = None
+            self._lb_ready = True
         return self.state()
 
     def leaderboard(self) -> list[dict]:
         with self._lock:
-            run_dir = self.ck_root / self._run_id if self._run_id else None
-            if run_dir is None or not run_dir.exists():
-                return []
-            files = tuple(sorted(run_dir.glob("*.zip")))
-            key = (self._run_id, files)
-            if self._lb_cache is not None and self._lb_key == key:
-                return self._lb_cache
-        rows = []
-        for ck in files:
-            rows.append(self._evaluate_checkpoint(ck))
-        rows.sort(key=lambda r: r.get("sharpe", -1e9), reverse=True)
-        with self._lock:
-            self._lb_cache = rows
-            self._lb_key = (self._run_id, tuple(sorted(files)))
-        return rows
+            if self._lb_ready:
+                return self._lb_cache or []
+            if self._lb_thread is not None and self._lb_thread.is_alive():
+                return self._lb_cache or []
+            self._lb_thread = threading.Thread(target=self._lb_worker,
+                                               daemon=True)
+            self._lb_thread.start()
+            return self._lb_cache or []
 
     def wait_idle(self, timeout: float) -> bool:
         t = self._train_thread
@@ -138,7 +136,7 @@ class TrainingTheater:
                     model = PPO("MlpPolicy", env, seed=self.cfg["training"]["seed"],
                                 verbose=0, n_steps=_CHUNK, batch_size=64)
                 else:
-                    model = load_policy(run_dir / "latest.zip")
+                    model = load_policy(run_dir / "latest.zip", env=env)
                 model.learn(total_timesteps=chunk, callback=cb)
                 steps += chunk
                 self._set_steps(steps)
@@ -153,7 +151,7 @@ class TrainingTheater:
                      "git_commit": "", "config_hash": ""})
                 with self._lock:
                     self._lb_cache = None
-                    self._lb_key = None
+                    self._lb_ready = False
                 self._spawn_replay(symbol, path)
             with self._lock:
                 self._status = "stopped"
@@ -190,6 +188,28 @@ class TrainingTheater:
         self._replay_thread = threading.Thread(target=run, daemon=True)
         self._replay_thread.start()
 
+    def _lb_worker(self) -> None:
+        while True:
+            with self._lock:
+                run_id = self._run_id
+            root = self.ck_root / run_id if run_id else None
+            if root is None or not root.exists():
+                with self._lock:
+                    self._lb_ready = True
+                return
+            files = tuple(sorted(root.glob("ppo_*.zip")))
+            rows = [self._evaluate_checkpoint(f) for f in files]
+            rows.sort(key=lambda r: r.get("sharpe", -1e9), reverse=True)
+            with self._lock:
+                if self._run_id != run_id or not root.exists():
+                    self._lb_ready = True
+                    return
+                if tuple(sorted(root.glob("ppo_*.zip"))) != files:
+                    continue
+                self._lb_cache = rows
+                self._lb_ready = True
+                return
+
     def _evaluate_checkpoint(self, ck: Path) -> dict:
         try:
             policy = load_policy(ck)
@@ -199,14 +219,20 @@ class TrainingTheater:
             env = TradingEnv(self._symbol or "X", window,
                              window=self.cfg["training"].get("window_bars", 120),
                              seed=0)
-            from engine.agents.ppo import evaluate_ppo
-            rep = evaluate_ppo(policy, env, episodes=3, seed=0)
+            obs, _ = env.reset()
+            curve = [env.unwrapped.initial_cash]
+            done = False
+            while not done:
+                action, _ = policy.predict(env.unwrapped._obs(), deterministic=True)
+                obs, reward, terminated, truncated, _ = env.step(int(action))
+                done = terminated or truncated
+                curve.append(env.unwrapped.equity)
             report = compute_eval_report(
-                rep["equity_series"],
+                curve,
                 self.store.get_trades())
             return {"path": str(ck), "sharpe": report.get("sharpe", 0.0),
                     "win_rate": report.get("win_rate", 0.0),
-                    "mean_reward": rep["mean_reward"], "traits": {}}
+                    "mean_reward": float(curve[-1] - curve[0]), "traits": {}}
         except Exception:
             return {"path": str(ck), "sharpe": -1e9, "win_rate": 0.0,
                     "mean_reward": 0.0, "traits": {}}

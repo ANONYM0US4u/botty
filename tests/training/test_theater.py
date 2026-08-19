@@ -91,12 +91,23 @@ def test_leaderboard_ranks_by_sharpe(tmp_path, monkeypatch):
     import engine.training.theater as mod
     monkeypatch.setattr(mod, "compute_eval_report",
                         lambda eq, trades: {"sharpe": 1.0, "win_rate": 0.5})
-    th, _ = _theater(tmp_path)
-    (th.ck_root / "runA").mkdir(parents=True)
-    (th.ck_root / "runA" / "a.zip").write_text("a")
+    monkeypatch.setattr(mod, "load_policy",
+                        lambda *a, **k: type("P", (), {"predict": lambda self,
+                        obs, **kw: (__import__("numpy").zeros(()), None)})())
+    th, store = _theater(tmp_path)
+    store.save_bars("BTCUSDT", _bars(400), 5)
     (th.ck_root / "runB").mkdir(parents=True)
-    (th.ck_root / "runB" / "b.zip").write_text("b")
+    (th.ck_root / "runB" / "ppo_b.zip").write_text("b")
     with th._lock:
         th._run_id = "runB"
+        th._symbol = "BTCUSDT"
+        th._lb_ready = False
     rows = th.leaderboard()
-    assert isinstance(rows, list)
+    assert rows == []
+    for _ in range(100):
+        rows = th.leaderboard()
+        if rows:
+            break
+        time.sleep(0.05)
+    assert len(rows) == 1
+    assert rows[0]["sharpe"] == 1.0
