@@ -1,10 +1,16 @@
 from datetime import datetime
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from engine.api.metrics_emitter import MetricsEmitter
 
 emitter = MetricsEmitter()
+
+_CORS_ORIGINS = [
+    "http://localhost:3000", "http://127.0.0.1:3000",
+    "http://localhost:3001", "http://127.0.0.1:3001",
+]
 
 _PROMOTION_ORDINAL = {"paper": 0, "staged": 1, "live": 2}
 
@@ -44,6 +50,12 @@ class Promotion:
 
 def create_app(store, risk, cfg: dict, theater=None) -> FastAPI:
     app = FastAPI(title="Trading Bot Engine")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_CORS_ORIGINS,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     promotion = Promotion()
 
     @app.get("/api/equity")

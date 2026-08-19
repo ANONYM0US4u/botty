@@ -21,6 +21,20 @@ export const getStatus = () => get<Status>("/api/status")
 export const setKillSwitch = (active: boolean) =>
   fetch(`${BASE}/api/killswitch`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ active }) })
 
+export interface TheaterState { status: string; symbol: string | null; run_id: string | null; steps: number; phase: string; error: string }
+export interface LeaderboardRow { path: string; sharpe: number; win_rate: number; mean_reward: number; traits: Record<string, unknown> }
+export interface DecisionRow { ts: string; symbol: string; action: string; probs: string }
+
+export const getTheaterState = () => get<TheaterState>("/api/theater/state")
+export const getLeaderboard = () => get<LeaderboardRow[]>("/api/theater/leaderboard")
+export const getDecisions = () => get<DecisionRow[]>("/api/decisions")
+export const theaterCommand = (cmd: "start" | "stop" | "reset", symbol?: string) =>
+  fetch(`${BASE}/api/theater/${cmd}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(symbol ? { symbol } : {}),
+  })
+
 export function useMetricsWs(onMessage: (m: MetricPoint) => void) {
   if (typeof window === "undefined") return
   const ws = new WebSocket(`${BASE.replace(/^http/, "ws")}/ws/metrics`)
