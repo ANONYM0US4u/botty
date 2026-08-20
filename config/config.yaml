@@ -18,7 +18,7 @@ theater:
 
 training:
   seed: 42
-  total_timesteps: 200_000
+  total_timesteps: 100_000
   eval_episodes: 10
   train_years: [2024, 2025]      # defaults; overridden by Task 4 probe result
   validate_years: [2026]
@@ -29,6 +29,7 @@ training:
     mutation_std: 0.01            # 0 = clone parent unchanged
     population_size: 3            # children per generation (parallel runs from same parent)
     torch_threads: 2              # intra-op threads per child (3 children x 2 = 6 <= 8 cores)
+    promotion_min_pct: 0.25       # skip checkpoints below 25% of total steps when promoting parent
   fitness_weights: { sharpe: 1.0, win_rate: 0.5 }   # composite selection score
   # Experiment tracking: every run gets run_id/model_id; checkpoints store
   # git commit + config hash so a trained model is fully reproducible.
@@ -40,7 +41,7 @@ reward:
   # Per-term weights, each term logged separately in info["reward_terms"].
   equity_delta_weight: 1.0
   cost_weight: 1.0
-  drawdown_penalty: 0.1
+  drawdown_penalty: 0.5          # raise toward Sharpe-alignment: punishes deep drawdowns harder
   holding_penalty: 0.0           # 0 initially; raise only after V1 baseline
 
 costs:

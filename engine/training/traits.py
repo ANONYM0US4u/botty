@@ -7,30 +7,33 @@ def compute_traits(fills: list[dict], decisions: list[dict],
     n_dec = max(len(decisions), 1)
     trade_frequency = trades / n_dec
 
-    # avg hold bars: distance (in fills) between an opening fill and the next
-    # fill on the same symbol in the opposite direction
+    # avg hold bars: bars between an opening fill and the closing fill on the
+    # same symbol in the opposite direction (via decision bar indices)
+    ts_idx = {d.get("ts"): i for i, d in enumerate(decisions)
+              if d.get("ts") is not None}
     hold_gaps = []
-    for i in range(1, len(fills)):
-        prev, cur = fills[i - 1], fills[i]
-        if prev["symbol"] == cur["symbol"] and prev["side"] != cur["side"]:
-            hold_gaps.append(i - (i - 1))
-    avg_hold_bars = float(sum(hold_gaps) / len(hold_gaps)) if hold_gaps else 0.0
-
     # win rate: close each buy-sell pair on same symbol, price-based
     wins = 0
     pairs = 0
-    open_side: dict[str, tuple[str, float]] = {}
-    for f in fills:
+    open_side: dict[str, tuple[str, float, int]] = {}
+    for i, f in enumerate(fills):
         sym = f["symbol"]
         if sym in open_side and open_side[sym][0] != f["side"]:
-            entry_price = open_side[sym][1]
+            entry_side, entry_price, entry_i = open_side[sym]
             pnl = (f["price"] - entry_price) if f["side"] == "sell" \
                 else (entry_price - f["price"])
             pairs += 1
             wins += 1 if pnl > 0 else 0
+            ei = ts_idx.get(fills[entry_i].get("ts"))
+            xi = ts_idx.get(f.get("ts"))
+            if ei is not None and xi is not None and xi > ei:
+                hold_gaps.append(xi - ei)
+            else:
+                hold_gaps.append(i - entry_i)
             del open_side[sym]
         else:
-            open_side[sym] = (f["side"], float(f["price"]))
+            open_side[sym] = (f["side"], float(f["price"]), i)
+    avg_hold_bars = float(sum(hold_gaps) / len(hold_gaps)) if hold_gaps else 0.0
     win_rate = wins / pairs if pairs else 0.0
 
     # max position notional vs equity (100k base)

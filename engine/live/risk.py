@@ -31,10 +31,26 @@ class RiskGateway:
     def set_last_price(self, symbol: str, price: float) -> None:
         self._last_prices[symbol] = float(price)
 
-    def check_order(self, order: dict, positions: list[dict], equity: float,
-                    day_pnl: float) -> tuple[bool, str]:
+    def _marked_equity(self) -> float:
+        total = self.broker.get_balance()
+        for p in self.broker.get_positions():
+            price = self._last_prices.get(p["symbol"]) \
+                or float(p.get("price", 0) or 0)
+            if price > 0:
+                total += float(p.get("qty", 0) or 0) * price
+        return total
+
+    def _pos_value(self, p: dict) -> float:
+        price = self._last_prices.get(p["symbol"]) \
+            or float(p.get("price", 0) or 0)
+        return abs(float(p.get("qty", 0) or 0)) * price
+
+    def check_order(self, order: dict, positions: list[dict],
+                    equity: float | None = None, day_pnl: float = 0.0) -> tuple[bool, str]:
         if self._killed:
             return False, "kill switch active"
+        if equity is None:
+            equity = self._marked_equity()
         if day_pnl / equity * 100.0 <= self.cfg["daily_loss_limit_pct"]:
             return False, "daily loss limit breached"
         price = float(order.get("price", 0) or 0)
@@ -45,18 +61,26 @@ class RiskGateway:
             return False, "stale data blocks trading"
         if price <= 0:
             return False, "position size cannot be sized without a price"
-        pos_value = abs(float(order.get("qty", 0))) * price
-        if pos_value / equity * 100.0 > self.cfg["max_position_pct"]:
+        qty = float(order.get("qty", 0) or 0)
+        side = order.get("side", "buy")
+        sym = order.get("symbol", "")
+        cur_qty = 0.0
+        for p in positions:
+            if p.get("symbol") == sym:
+                cur_qty = float(p.get("qty", 0) or 0)
+                break
+        post_qty = cur_qty + qty if side == "buy" else cur_qty - qty
+        post_value = abs(post_qty) * price
+        if post_value / equity * 100.0 > self.cfg["max_position_pct"]:
             return False, "position size exceeds cap"
-        total = pos_value + sum(abs(float(p.get("qty", 0)) * float(p.get("price", 0)))
-                                for p in positions)
-        if total / equity * 100.0 > self.cfg["max_total_exposure_pct"]:
+        other = sum(self._pos_value(p)
+                    for p in positions if p.get("symbol") != sym)
+        if (post_value + other) / equity * 100.0 > self.cfg["max_total_exposure_pct"]:
             return False, "total exposure exceeds cap"
         return True, ""
 
     def execute_order(self, order: dict) -> dict:
-        ok, why = self.check_order(order, self.get_positions(),
-                                   self.get_balance(), 0.0)
+        ok, why = self.check_order(order, self.get_positions())
         if not ok:
             return {"status": "failed", "reason": why, "retryable": False}
         from engine.brokers.errors import TransientBrokerError, PermanentBrokerError

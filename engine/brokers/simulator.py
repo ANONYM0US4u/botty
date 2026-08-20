@@ -70,7 +70,7 @@ class SimulatorAdapter(BrokerAdapter):
         return [{"symbol": s, "qty": q} for s, q in self.positions.items() if q != 0]
 
     def get_orders(self) -> list[dict]:
-        return [o for o in self.orders if o["status"] == "open"]
+        return [o for o in self.orders if o["status"] in ("open", "pending")]
 
     def get_balance(self) -> float:
         return self.cash

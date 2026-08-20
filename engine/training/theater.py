@@ -175,7 +175,9 @@ class TrainingTheater:
             env = TradingEnv(symbol, bars, window=self.cfg["training"].get(
                 "window_bars", 120), seed=seed,
                 cost_pct=cost_pct,
-                position_pct=self.cfg["training"].get("position_pct", 0.30))
+                position_pct=self.cfg["training"].get("position_pct", 0.30),
+                dd_penalty=self.cfg.get("reward", {}).get(
+                    "drawdown_penalty", 0.1))
             total = self.cfg["training"]["total_timesteps"]
             steps = 0
             while steps < total and not self._stop.is_set():
@@ -208,9 +210,11 @@ class TrainingTheater:
                 from engine.agents.ppo import atomic_save
                 atomic_save(model, path)
                 shutil.copy(path, child_dir / "latest.zip")
+                ev = self._evaluate_checkpoint(path)
                 self.store.append_checkpoint(
-                    {"path": str(path), "reward": 0.0, "sharpe": 0.0,
-                     "ts": steps, "run_id": self._run_id,
+                    {"path": str(path), "reward": ev.get("mean_reward", 0.0),
+                     "sharpe": ev.get("sharpe", 0.0), "ts": steps,
+                     "run_id": self._run_id,
                      "model_id": f"ppo-{self._run_id}",
                      "git_commit": "", "config_hash": ""})
                 with self._lock:
@@ -221,7 +225,9 @@ class TrainingTheater:
                 self._active_children -= 1
                 done = self._active_children <= 0
             if done and not self._stop.is_set():
+                self._set_phase("promoting best checkpoint...")
                 self._promote_best(run_dir)
+                self._set_phase("completed")
             with self._lock:
                 if self._status != "error":
                     self._status = "stopped"
@@ -299,7 +305,8 @@ class TrainingTheater:
         files = []
         for d in sorted(root.iterdir()):
             if d.is_dir() and d.name.startswith("child_"):
-                cks = sorted(d.glob("ppo_*.zip"))
+                cks = sorted(d.glob("ppo_*.zip"),
+                             key=lambda p: int(p.stem.split("_")[1]))
                 if cks:
                     files.append(cks[-1])
             elif d.is_file() and d.name.startswith("ppo_"):
@@ -308,9 +315,15 @@ class TrainingTheater:
 
     def _promote_best(self, run_dir: Path) -> None:
         try:
+            evo = self.cfg.get("training", {}).get("evolution", {})
+            min_pct = float(evo.get("promotion_min_pct", 0.0))
+            total = int(self.cfg["training"]["total_timesteps"])
+            min_steps = int(total * min_pct)
             best = -1e9
             best_path = None
             for f in self._all_checkpoints(run_dir):
+                if int(f.stem.split("_")[1]) < min_steps:
+                    continue
                 row = self._evaluate_checkpoint(f)
                 s = row.get("fitness", row.get("sharpe", -1e9))
                 if s > best and s > -1e8:

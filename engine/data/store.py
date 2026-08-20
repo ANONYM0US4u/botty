@@ -107,7 +107,7 @@ class DataStore:
 
     def get_checkpoints(self) -> list[dict]:
         with self._conn() as conn:
-            rows = conn.execute("SELECT * FROM checkpoints ORDER BY ts DESC").fetchall()
+            rows = conn.execute("SELECT * FROM checkpoints ORDER BY CAST(ts AS INTEGER) DESC").fetchall()
         cols = ["path", "reward", "sharpe", "ts", "run_id", "model_id",
                 "git_commit", "config_hash"]
         return [dict(zip(cols, r)) for r in rows]

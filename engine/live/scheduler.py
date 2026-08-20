@@ -56,8 +56,14 @@ class Scheduler:
             if p.get("symbol") == symbol:
                 pos_units = float(p.get("qty", 0.0) or 0.0)
         equity = self.risk.get_balance() + pos_units * price
-        target_units = self.qty_pct * equity / price if price > 0 else 0.0
-        delta = target_units - pos_units
+        pending_units = 0.0
+        for o in self.risk.get_orders():
+            if o.get("symbol") == symbol:
+                q = float(o.get("qty", 0.0) or 0.0)
+                pending_units += q if o.get("side") == "buy" else -q
+        sign = {0: 0.0, 1: 1.0, 2: -1.0}[int(action)]
+        target_units = sign * self.qty_pct * equity / price if price > 0 else 0.0
+        delta = target_units - (pos_units + pending_units)
         if abs(delta) * price / equity <= 0.005:
             summary = {"action": "flat", "reason": "position at target", "probs": probs}
         elif delta > 0:
@@ -82,9 +88,8 @@ class Scheduler:
             self.store.append_decision({"ts": ts, "symbol": symbol,
                                         "action": summary["action"], "probs": str(probs),
                                         "features": "[]", "attribution": "[]"})
-            eq = self.risk.get_balance()
-            self.store.append_equity(ts, eq)
-            self.store.append_metric("equity", eq, ts)
+            self.store.append_equity(ts, equity)
+            self.store.append_metric("equity", equity, ts)
         return summary
 
     def flatten_all(self, reason: str) -> None:
