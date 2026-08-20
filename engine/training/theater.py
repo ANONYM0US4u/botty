@@ -90,6 +90,9 @@ class TrainingTheater:
             self.store.clear_metrics()
         evo = self.cfg.get("training", {}).get("evolution", {})
         pop = max(1, int(evo.get("population_size", 1)))
+        if evo.get("enabled"):
+            import torch
+            torch.set_num_threads(int(evo.get("torch_threads", 2)))
         parent = self._find_best_parent(market, symbol) if evo.get("enabled") else None
         with self._lock:
             self._active_children = pop

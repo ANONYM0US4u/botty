@@ -28,6 +28,7 @@ training:
     enabled: true                 # next generation inherits best parent weights + mutation
     mutation_std: 0.01            # 0 = clone parent unchanged
     population_size: 3            # children per generation (parallel runs from same parent)
+    torch_threads: 2              # intra-op threads per child (3 children x 2 = 6 <= 8 cores)
   fitness_weights: { sharpe: 1.0, win_rate: 0.5 }   # composite selection score
   # Experiment tracking: every run gets run_id/model_id; checkpoints store
   # git commit + config hash so a trained model is fully reproducible.
