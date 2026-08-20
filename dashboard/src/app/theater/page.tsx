@@ -1,7 +1,7 @@
 "use client"
 import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { getDecisions, getLeaderboard, getMode, getTheaterState, postMode, theaterCommand } from "@/lib/api"
+import { getDecisions, getLeaderboard, getMode, getTheaterState, getTraits, postMode, theaterCommand } from "@/lib/api"
 import ActionProbsChart, { type ProbPoint } from "@/components/ActionProbsChart"
 import HelpPanel from "@/components/HelpPanel"
 import LeaderboardTable from "@/components/LeaderboardTable"
@@ -16,6 +16,7 @@ export default function Theater() {
   const st = useQuery({ queryKey: ["theater-state"], queryFn: getTheaterState, refetchInterval: 5_000 })
   const lb = useQuery({ queryKey: ["theater-lb"], queryFn: getLeaderboard, refetchInterval: 10_000 })
   const dec = useQuery({ queryKey: ["theater-dec"], queryFn: getDecisions, refetchInterval: 10_000 })
+  const tr = useQuery({ queryKey: ["theater-traits"], queryFn: getTraits, refetchInterval: 5_000 })
   const mode = useQuery({ queryKey: ["mode"], queryFn: getMode, refetchInterval: 5_000 })
   const md = mode.data
 
@@ -35,6 +36,7 @@ export default function Theater() {
       setTraits(e.payload)
     }
   })
+  const traitsShown = Object.keys(traits).length > 0 ? traits : (tr.data ?? {})
 
   const state = st.data ?? { status: "unknown", symbol: null, run_id: null, steps: 0, phase: "", error: "" }
   const running = state.status === "running" || state.status === "starting"
@@ -138,7 +140,7 @@ export default function Theater() {
       </section>
       <section>
         <h2>Traits (latest replay)</h2>
-        <TraitsTable traits={traits} />
+        <TraitsTable traits={traitsShown} />
       </section>
       <section>
         <h2>Checkpoint leaderboard</h2>

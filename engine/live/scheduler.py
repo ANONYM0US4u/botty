@@ -1,4 +1,5 @@
 from datetime import datetime
+import math
 import time
 import polars as pl
 from stable_baselines3.common.utils import obs_as_tensor
@@ -49,16 +50,34 @@ class Scheduler:
             probs = []
         target = {0: "flat", 1: "long", 2: "short"}[int(action)]
         summary = {"action": target, "reason": "", "probs": probs}
-        if target != "flat":
-            price = float(bar.get("close", 0.0) or 0.0)
-            qty = max(1, int(self.risk.get_balance() * self.qty_pct / price)) \
-                if price > 0 else 1
-            order = {"symbol": symbol,
-                     "side": "buy" if target == "long" else "sell",
-                     "qty": qty, "price": price}
-            res = self.risk.execute_order(order)
-            if res.get("status") == "failed":
-                summary = {"action": "flat", "reason": res.get("reason", "risk-gated")}
+        price = float(bar.get("close", 0.0) or 0.0)
+        pos_units = 0.0
+        for p in self.risk.get_positions():
+            if p.get("symbol") == symbol:
+                pos_units = float(p.get("qty", 0.0) or 0.0)
+        equity = self.risk.get_balance() + pos_units * price
+        target_units = self.qty_pct * equity / price if price > 0 else 0.0
+        delta = target_units - pos_units
+        if abs(delta) * price / equity <= 0.005:
+            summary = {"action": "flat", "reason": "position at target", "probs": probs}
+        elif delta > 0:
+            qty = math.floor(delta * 1e6) / 1e6
+            if qty <= 0:
+                summary = {"action": "flat", "reason": "position too small", "probs": probs}
+            else:
+                order = {"symbol": symbol, "side": "buy", "qty": qty, "price": price}
+                res = self.risk.execute_order(order)
+                if res.get("status") == "failed":
+                    summary = {"action": "flat", "reason": res.get("reason", "risk-gated")}
+        else:
+            qty = math.floor(-delta * 1e6) / 1e6
+            if qty <= 0:
+                summary = {"action": "flat", "reason": "position too small", "probs": probs}
+            else:
+                order = {"symbol": symbol, "side": "sell", "qty": qty, "price": price}
+                res = self.risk.execute_order(order)
+                if res.get("status") == "failed":
+                    summary = {"action": "flat", "reason": res.get("reason", "risk-gated")}
         if self.persist:
             self.store.append_decision({"ts": ts, "symbol": symbol,
                                         "action": summary["action"], "probs": str(probs),

@@ -1,4 +1,6 @@
+import json
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 import polars as pl
 
@@ -24,6 +26,9 @@ CREATE TABLE IF NOT EXISTS metrics (
   name TEXT, value REAL, ts TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_metrics_name_ts ON metrics(name, ts);
+CREATE TABLE IF NOT EXISTS traits (
+  ts TEXT, data TEXT
+);
 """
 
 
@@ -143,3 +148,19 @@ class DataStore:
                     "SELECT value, ts FROM metrics WHERE name=? ORDER BY ts",
                     (name,)).fetchall()
         return [{"value": r[0], "ts": r[1]} for r in rows]
+
+    def clear_metrics(self) -> None:
+        with self._conn() as conn:
+            conn.execute("DELETE FROM metrics")
+
+    def append_traits(self, traits: dict) -> None:
+        with self._conn() as conn:
+            conn.execute("INSERT INTO traits VALUES (?,?)",
+                         (datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                          json.dumps(traits)))
+
+    def get_latest_traits(self) -> dict:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT data FROM traits ORDER BY rowid DESC LIMIT 1").fetchone()
+        return json.loads(row[0]) if row else {}

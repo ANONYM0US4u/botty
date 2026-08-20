@@ -23,6 +23,12 @@ training:
   train_years: [2024, 2025]      # defaults; overridden by Task 4 probe result
   validate_years: [2026]
   window_bars: 120
+  position_pct: 0.30              # fraction of equity per position (env sizing, matches risk cap)
+  evolution:
+    enabled: true                 # next generation inherits best parent weights + mutation
+    mutation_std: 0.01            # 0 = clone parent unchanged
+    population_size: 3            # children per generation (parallel runs from same parent)
+  fitness_weights: { sharpe: 1.0, win_rate: 0.5 }   # composite selection score
   # Experiment tracking: every run gets run_id/model_id; checkpoints store
   # git commit + config hash so a trained model is fully reproducible.
   tracking:

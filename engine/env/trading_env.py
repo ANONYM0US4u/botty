@@ -11,7 +11,7 @@ _FEATURES = ["open", "high", "low", "close", "volume",
 
 class TradingEnv(gym.Env):
     def __init__(self, symbol, bars, initial_cash=100_000.0, cost_pct=0.001,
-                 window=120, seed=42, holding_penalty=0.0):
+                 window=120, seed=42, holding_penalty=0.0, position_pct=0.30):
         super().__init__()
         if any(c not in bars.columns for c in ("open", "high", "low", "close", "volume")):
             raise ValueError("bars missing OHLCV columns")
@@ -24,6 +24,7 @@ class TradingEnv(gym.Env):
         self.cost_pct = cost_pct
         self.window = window
         self.holding_penalty = holding_penalty
+        self.position_pct = float(position_pct)
         self.n_features = len(_FEATURES)
         self._rng = np.random.default_rng(seed)
         self.action_space = spaces.Discrete(3)  # 0=flat, 1=long, 2=short
@@ -51,7 +52,8 @@ class TradingEnv(gym.Env):
         if options is not None:
             start_idx = options.get("start_idx")
         if start_idx is None:
-            start_idx = self.window
+            hi = max(self.window + 1, len(self.bars) - self.window)
+            start_idx = int(self._rng.integers(self.window, hi))
         start_idx = int(start_idx)
         if start_idx < self.window or start_idx >= len(self.bars):
             start_idx = self.window
@@ -69,28 +71,24 @@ class TradingEnv(gym.Env):
         return self.cash + self.position * self._price()
 
     def step(self, action):
-        target = {0: 0.0, 1: 1.0, 2: -1.0}[int(action)]
+        target = {0: 0.0, 1: self.position_pct, 2: -self.position_pct}[int(action)]
+        price = self._price()
+        target_units = target * self.equity / price if price > 0 else 0.0
+        delta = target_units - self.position
         turnover = 0.0
-        if target != self.position:
-            price = self._price()
-            delta = target - self.position
-            turnover = abs(delta) * self.equity * self.cost_pct
-            if target > 0:
-                self.cash -= target * price
-            elif target < 0:
-                self.cash += abs(target) * price
-            else:
-                self.cash += self.position * price
-            self.position = target
+        if abs(delta) > 1e-12:
+            self.cash -= delta * price
+            self.position += delta
+            turnover = abs(delta) * price * self.cost_pct
         self._idx += 1
         prev = self.equity
         self.equity = self._equity()
         self._peak = max(self._peak, self.equity)
         dd = (self._peak - self.equity) / self._peak
-        equity_delta = self.equity - prev
-        cost_term = turnover
+        equity_delta = (self.equity - prev) / self.initial_cash
+        cost_term = turnover / self.initial_cash
         dd_term = 0.1 * dd
-        hold_term = self.holding_penalty * abs(self.position)
+        hold_term = self.holding_penalty * abs(target)
         reward = equity_delta - cost_term - dd_term - hold_term
         terminated = self._idx >= len(self.bars) - 1
         info = {"equity": self.equity,

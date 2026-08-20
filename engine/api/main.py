@@ -125,6 +125,10 @@ def create_app(store, risk, cfg: dict, theater=None, mode=None, heartbeat=None) 
     def decisions(symbol: str | None = None, limit: int = 100):
         return store.get_decisions(symbol, limit)
 
+    @app.get("/api/traits")
+    def traits():
+        return store.get_latest_traits()
+
     def _require_theater():
         return None if theater is None else theater
 

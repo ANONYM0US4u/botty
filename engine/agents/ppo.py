@@ -56,10 +56,16 @@ def atomic_save(model, path) -> None:
 
 
 class _TheaterCallback(_MetricCallback):
-    def __init__(self, emitter, store, ts_name: str, stop_check=None):
+    def __init__(self, emitter, store, ts_name: str, stop_check=None, tag: str = ""):
         super().__init__(emitter, store, ts_name)
         self._probs = deque(maxlen=100)
         self._stop_check = stop_check
+        self._tag = tag
+
+    def _emit(self, name: str, value: float) -> None:
+        if self._tag:
+            name = f"{name}_{self._tag}"
+        super()._emit(name, value)
 
     def _on_step(self) -> bool:
         if self._stop_check is not None and self._stop_check():

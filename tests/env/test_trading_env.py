@@ -44,10 +44,10 @@ def test_causal_feature_invariant():
     # Observation at index i must not change if later bars are removed.
     full = _bars()
     env_full = TradingEnv("RELIANCE.NS", full, seed=3)
-    env_full.reset()
+    env_full.reset(options={"start_idx": 200})
     truncated = _bars(300)  # same bars, cut short
     env_trunc = TradingEnv("RELIANCE.NS", truncated, seed=3)
-    env_trunc.reset()
+    env_trunc.reset(options={"start_idx": 200})
     assert np.allclose(env_full._obs(), env_trunc._obs())
 
 

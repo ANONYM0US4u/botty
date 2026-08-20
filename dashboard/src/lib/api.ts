@@ -28,6 +28,7 @@ export interface DecisionRow { ts: string; symbol: string; action: string; probs
 export const getTheaterState = () => get<TheaterState>("/api/theater/state")
 export const getLeaderboard = () => get<LeaderboardRow[]>("/api/theater/leaderboard")
 export const getDecisions = () => get<DecisionRow[]>("/api/decisions")
+export const getTraits = () => get<Record<string, unknown>>("/api/traits")
 export const theaterCommand = (cmd: "start" | "stop" | "reset", symbol?: string) =>
   fetch(`${BASE}/api/theater/${cmd}`, {
     method: "POST",
